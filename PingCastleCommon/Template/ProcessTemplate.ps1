@@ -89,3 +89,4 @@ ProcessTemplate -File popper.min.js
 ProcessTemplate -File tableExport.min.js
 ProcessTemplate -File vis.min.css
 ProcessTemplate -File vis.min.js
+ProcessTemplate -File fontawesome.all.min.css
