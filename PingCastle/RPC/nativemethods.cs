@@ -1,4 +1,4 @@
-﻿//
+//
 // Copyright (c) Ping Castle. All rights reserved.
 // https://www.pingcastle.com
 //
@@ -78,8 +78,6 @@ namespace PingCastle.RPC
         [DllImport("Rpcrt4.dll", EntryPoint = "RpcBindingFree", CallingConvention = CallingConvention.StdCall,
             CharSet = CharSet.Unicode, SetLastError = false)]
         internal static extern Int32 RpcBindingFree(ref IntPtr lpString);
-
-        //#region RpcStringBindingCompose
 
         [DllImport("Rpcrt4.dll", EntryPoint = "RpcStringBindingComposeW", CallingConvention = CallingConvention.StdCall,
             CharSet = CharSet.Unicode, SetLastError = false)]

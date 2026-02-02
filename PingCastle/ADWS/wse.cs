@@ -10,6 +10,7 @@
 
 #pragma warning disable 0436
 
+using System;
 using System.Data;
 
 [assembly: System.Runtime.Serialization.ContractNamespaceAttribute("http://schemas.microsoft.com/2008/1/ActiveDirectory", ClrNamespace="schemas.microsoft.com._2008._1.ActiveDirectory")]
@@ -369,22 +370,7 @@ internal partial class AccountManagementClient : System.ServiceModel.ClientBase<
     public AccountManagementClient()
     {
     }
-    
-    public AccountManagementClient(string endpointConfigurationName) : 
-            base(endpointConfigurationName)
-    {
-    }
-    
-    public AccountManagementClient(string endpointConfigurationName, string remoteAddress) : 
-            base(endpointConfigurationName, remoteAddress)
-    {
-    }
-    
-    public AccountManagementClient(string endpointConfigurationName, System.ServiceModel.EndpointAddress remoteAddress) : 
-            base(endpointConfigurationName, remoteAddress)
-    {
-    }
-    
+
     public AccountManagementClient(System.ServiceModel.Channels.Binding binding, System.ServiceModel.EndpointAddress remoteAddress) : 
             base(binding, remoteAddress)
     {
@@ -797,22 +783,8 @@ internal partial class TopologyManagementClient : System.ServiceModel.ClientBase
     public TopologyManagementClient()
     {
     }
-    
-    public TopologyManagementClient(string endpointConfigurationName) : 
-            base(endpointConfigurationName)
-    {
-    }
-    
-    public TopologyManagementClient(string endpointConfigurationName, string remoteAddress) : 
-            base(endpointConfigurationName, remoteAddress)
-    {
-    }
-    
-    public TopologyManagementClient(string endpointConfigurationName, System.ServiceModel.EndpointAddress remoteAddress) : 
-            base(endpointConfigurationName, remoteAddress)
-    {
-    }
-    
+
+
     public TopologyManagementClient(System.ServiceModel.Channels.Binding binding, System.ServiceModel.EndpointAddress remoteAddress) : 
             base(binding, remoteAddress)
     {
@@ -5156,22 +5128,8 @@ internal partial class SearchClient : System.ServiceModel.ClientBase<Search>, Se
     public SearchClient()
     {
     }
-    
-    public SearchClient(string endpointConfigurationName) : 
-            base(endpointConfigurationName)
-    {
-    }
-    
-    public SearchClient(string endpointConfigurationName, string remoteAddress) : 
-            base(endpointConfigurationName, remoteAddress)
-    {
-    }
-    
-    public SearchClient(string endpointConfigurationName, System.ServiceModel.EndpointAddress remoteAddress) : 
-            base(endpointConfigurationName, remoteAddress)
-    {
-    }
-    
+
+
     public SearchClient(System.ServiceModel.Channels.Binding binding, System.ServiceModel.EndpointAddress remoteAddress) : 
             base(binding, remoteAddress)
     {
@@ -5403,22 +5361,8 @@ internal partial class ResourceClient : System.ServiceModel.ClientBase<Resource>
     public ResourceClient()
     {
     }
-    
-    public ResourceClient(string endpointConfigurationName) : 
-            base(endpointConfigurationName)
-    {
-    }
-    
-    public ResourceClient(string endpointConfigurationName, string remoteAddress) : 
-            base(endpointConfigurationName, remoteAddress)
-    {
-    }
-    
-    public ResourceClient(string endpointConfigurationName, System.ServiceModel.EndpointAddress remoteAddress) : 
-            base(endpointConfigurationName, remoteAddress)
-    {
-    }
-    
+
+
     public ResourceClient(System.ServiceModel.Channels.Binding binding, System.ServiceModel.EndpointAddress remoteAddress) : 
             base(binding, remoteAddress)
     {
@@ -5481,22 +5425,8 @@ internal partial class ResourceFactoryClient : System.ServiceModel.ClientBase<Re
     public ResourceFactoryClient()
     {
     }
-    
-    public ResourceFactoryClient(string endpointConfigurationName) : 
-            base(endpointConfigurationName)
-    {
-    }
-    
-    public ResourceFactoryClient(string endpointConfigurationName, string remoteAddress) : 
-            base(endpointConfigurationName, remoteAddress)
-    {
-    }
-    
-    public ResourceFactoryClient(string endpointConfigurationName, System.ServiceModel.EndpointAddress remoteAddress) : 
-            base(endpointConfigurationName, remoteAddress)
-    {
-    }
-    
+
+
     public ResourceFactoryClient(System.ServiceModel.Channels.Binding binding, System.ServiceModel.EndpointAddress remoteAddress) : 
             base(binding, remoteAddress)
     {

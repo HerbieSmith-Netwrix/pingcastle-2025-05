@@ -1,5 +1,8 @@
 ﻿namespace PingCastle.Scanners
 {
+    using PingCastle.ADWS;
+    using PingCastle.UserInterface;
+    using PingCastleCommon.Utility;
     using System;
     using System.Collections.Generic;
     using System.ComponentModel;
@@ -7,8 +10,6 @@
     using System.Net.NetworkInformation;
     using System.Runtime.InteropServices;
     using System.Text;
-    using PingCastle.UserInterface;
-    using PingCastleCommon.Utility;
 
     public sealed class AntivirusScanner : ScannerBase
     {
@@ -114,12 +115,17 @@
 
             {"WRSVC", "Webroot"},
 
-            {"WinDefend", "Windows Defender Antivirus Service"},
-            {"Sense ", "Windows Defender Advanced Threat Protection Service"},
-            {"WdNisSvc ", "Windows Defender Antivirus Network Inspection Service"},
+            {"WinDefend", "Microsoft Defender Antivirus Service (formerly Windows Defender Antivirus Service)"},
+            {"Sense", "Microsoft Defender for Endpoint Service (formerly Windows Defender Advanced Threat Protection Service)"},
+            {"WdNisSvc", "Microsoft Defender Antivirus Network Inspection Service (formerly Windows Defender Antivirus Network Inspection Service)"},
         };
 
         private readonly List<string> _customService = new List<string>();
+
+        public AntivirusScanner(IIdentityProvider identityProvider)
+            :base(identityProvider)
+        {
+        }
 
         override protected string GetCsvHeader()
         {

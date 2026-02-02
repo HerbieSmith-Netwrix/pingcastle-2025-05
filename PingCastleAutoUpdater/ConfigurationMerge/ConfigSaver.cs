@@ -1,11 +1,11 @@
 namespace PingCastleAutoUpdater.ConfigurationMerge
 {
     using System;
-    using System.Xml.Linq;
+    using System.Xml;
 
     public class ConfigSaver : IConfigSaver
     {
-        public void SaveConfig(XDocument config, string path)
+        public void SaveConfig(XmlDocument config, string path)
         {
             if (config == null)
             {

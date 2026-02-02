@@ -4,6 +4,7 @@
 //
 // Licensed under the Non-Profit OSL. See LICENSE file in the project root for full license information.
 //
+using PingCastle.ADWS;
 using PingCastle.Scanners;
 using System;
 using System.Net.Sockets;
@@ -12,6 +13,11 @@ namespace PingCastle.shares
 {
     public class ShareScanner : ScannerBase
     {
+        public ShareScanner(IIdentityProvider identityProvider)
+            : base(identityProvider)
+        {
+        }
+
         public override string Name { get { return "share"; } }
         public override string Description { get { return "List all shares published on a computer and determine if the share can be accessed by anyone"; } }
 

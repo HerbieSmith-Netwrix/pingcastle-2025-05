@@ -3,7 +3,9 @@ using PingCastle.Healthcheck;
 using PingCastle.PingCastleLicense;
 using PingCastle.Report;
 using PingCastle.Rules;
+using PingCastle.Scanners;
 using PingCastle.UserInterface;
+using PingCastleCommon.Utility;
 using System;
 using System.Collections.Generic;
 using System.IO;
@@ -13,11 +15,22 @@ using System.Xml.Serialization;
 
 namespace PingCastle.Bot
 {
-
+    using ADWS;
 
     public class Bot
     {
         private readonly IUserInterface _userIo = UserInterfaceFactory.GetUserInterface();
+        private readonly IWindowsNativeMethods _nativeMethods;
+        private readonly IIdentityProvider _identityProvider;
+        private readonly Smb2ProtocolTest _smb2Test;
+
+        public Bot(IWindowsNativeMethods nativeMethods, IIdentityProvider identityProvider, Smb2ProtocolTest smb2Test)
+        {
+            _nativeMethods = nativeMethods;
+            _identityProvider = identityProvider;
+            ArgumentNullException.ThrowIfNull(smb2Test);
+            _smb2Test = smb2Test;
+        }
 
         public void Run(string pipeName)
         {
@@ -140,7 +153,7 @@ namespace PingCastle.Bot
         {
             try
             {
-                var analyze = new HealthcheckAnalyzer();
+                var analyze = new HealthcheckAnalyzer(_nativeMethods, _identityProvider, _smb2Test);
                 var parameters = new PingCastleAnalyzerParameters();
                 parameters.Server = GetItem(input, "Server");
                 var login = GetItem(input, "Login");

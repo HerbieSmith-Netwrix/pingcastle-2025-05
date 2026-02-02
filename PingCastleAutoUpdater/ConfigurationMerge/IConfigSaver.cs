@@ -1,9 +1,9 @@
 namespace PingCastleAutoUpdater.ConfigurationMerge
 {
-    using System.Xml.Linq;
+    using System.Xml;
 
     public interface IConfigSaver
     {
-        void SaveConfig(XDocument config, string path);
+        void SaveConfig(XmlDocument config, string path);
     }
 }

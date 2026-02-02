@@ -9,8 +9,14 @@ using System;
 
 namespace PingCastle.Scanners
 {
+    using ADWS;
+
     public class SpoolerScanner : ScannerBase
     {
+        public SpoolerScanner(IIdentityProvider identityProvider)
+            : base(identityProvider)
+        {
+        }
 
         public override string Name { get { return "spooler"; } }
         public override string Description { get { return "Check if the spooler service is remotely active. The spooler can be abused to get computer tokens when unconstrained delegations are exploited."; } }

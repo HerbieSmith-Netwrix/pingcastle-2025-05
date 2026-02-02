@@ -1,9 +1,26 @@
-﻿//
+//
 // Copyright (c) Ping Castle. All rights reserved.
 // https://www.pingcastle.com
 //
 // Licensed under the Non-Profit OSL. See LICENSE file in the project root for full license information.
 //
+using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.DependencyInjection;
+using PingCastle.ADWS;
+using PingCastle.Cloud.Common;
+using PingCastle.Data;
+using PingCastle.Exports;
+using PingCastle.Factories;
+using PingCastle.Graph.Reporting;
+using PingCastle.Healthcheck;
+using PingCastle.misc;
+using PingCastle.PingCastleLicense;
+using PingCastle.Report;
+using PingCastle.Scanners;
+using PingCastle.UserInterface;
+using PingCastleCommon;
+using PingCastleCommon.RPC;
+using PingCastleCommon.Scanners;
 using System;
 using System.Collections.Generic;
 using System.ComponentModel;
@@ -13,22 +30,9 @@ using System.IO;
 using System.Reflection;
 using System.Text.RegularExpressions;
 using System.Threading;
-using PingCastle.ADWS;
-using PingCastle.Cloud.Common;
-using PingCastle.Data;
-using PingCastle.Exports;
-using PingCastle.Graph.Reporting;
-using PingCastle.Healthcheck;
-using PingCastle.misc;
-using PingCastle.PingCastleLicense;
-using PingCastle.Report;
-using PingCastle.Scanners;
-using PingCastle.UserInterface;
-using PingCastleCommon;
 
 namespace PingCastle
 {
-
     enum PossibleTasks
     {
         GenerateKey,
@@ -51,6 +55,24 @@ namespace PingCastle
     [LicenseProvider(typeof(PingCastle.ADHealthCheckingLicenseProvider))]
     public class Program : IPingCastleLicenseInfo
     {
+        private static IServiceProvider _serviceProvider;
+        public static IServiceProvider ServiceProvider => _serviceProvider;
+
+        /// <summary>
+        /// See <see cref="ExitCodeExtensions"/> for utility extension method.
+        /// </summary>
+        public enum ExitCodes
+        {
+            Success = 0,
+            InvalidLicenseDomainPattern = 1,
+            DomainNotAllowed = 2,
+            MissingApiEndpointArgument = 3,
+            InvalidApiEndpointArgument = 4,
+            MissingApiKeyArgument = 5,
+            InvalidLicense = 6,
+            InvalidCommandLineArguments = 7,
+            UnknownErrorSeeConsole = 8
+        }
 
         private Dictionary<PossibleTasks, Func<bool>> actions;
         private Dictionary<PossibleTasks, string[]> requiredSettings;
@@ -62,21 +84,16 @@ namespace PingCastle
         private readonly RuntimeSettings settings;
         private readonly Tasks tasks;
 
-        public Program()
+        public Program(RuntimeSettings runtimeSettings, Tasks taskService)
         {
-            settings = new RuntimeSettings();
-            tasks = new Tasks(settings);
+            settings = runtimeSettings;
+            tasks = taskService;
         }
 
         public static void Main(string[] args)
         {
             try
             {
-                // enable the use of TLS1.0
-                //AppContext.SetSwitch("Switch.System.Net.DontEnableSchUseStrongCrypto", true);
-                // enable the use of TLS1.2 if enabled on the system
-                //AppContext.SetSwitch("Switch.System.Net.DontEnableSystemDefaultTlsVersions", false);
-
                 Thread.CurrentThread.CurrentUICulture = CultureInfo.InvariantCulture;
 
                 AppDomain.CurrentDomain.UnhandledException += new UnhandledExceptionEventHandler(CurrentDomain_UnhandledException);
@@ -86,8 +103,10 @@ namespace PingCastle
                 // If we ever use DI, this would just be a registration of ConsoleInterface against IUserInterface
                 UserInterfaceFactory.RegisterUserInterfaceType<ConsoleInterface>();
 
+                InitializeServiceProvider();
+
                 Trace.WriteLine("Running on dotnet:" + Environment.Version);
-                Program program = new Program();
+                Program program = ServiceProvider.GetRequiredService<Program>();
                 program.Run(args);
                 // dispose the http logger
                 HttpClientHelper.EnableLoging(null);
@@ -107,6 +126,27 @@ namespace PingCastle
             }
         }
 
+        private static void InitializeServiceProvider()
+        {
+            var configBuilder = new ConfigurationBuilder()
+                .SetBasePath(Directory.GetCurrentDirectory())
+                .AddJsonFile("appsettings.console.json", optional: true, reloadOnChange: false);
+
+            var configuration = configBuilder.Build();
+
+            var services = new ServiceCollection();
+
+            // Register assemblies for scanner/export discovery
+            PingCastleFactoryRegistry.RegisterAssembly(typeof(Program).Assembly);      // PingCastle.exe
+            PingCastleFactoryRegistry.RegisterAssembly(typeof(IScanner).Assembly);     // PingCastleCommon
+
+            services.AddPingCastleConfiguration(configuration);
+
+            _serviceProvider = services.BuildServiceProvider();
+
+            ServiceProviderAccessor.Initialize(_serviceProvider);
+        }
+
         static void CurrentDomain_UnhandledException(object sender, UnhandledExceptionEventArgs e)
         {
             Tasks.DisplayException("application domain", e.ExceptionObject as Exception);
@@ -122,7 +162,7 @@ namespace PingCastle
 
         private void Run(string[] args)
         {
-            ADHealthCheckingLicense license;
+            ADHealthCheckingLicense license = null;
             Trace.WriteLine("PingCastle version " + _version.ToString(4));
             for (int i = 0; i < args.Length; i++)
             {
@@ -136,8 +176,7 @@ namespace PingCastle
                 }
                 else if (args[i].Equals("--out", StringComparison.InvariantCultureIgnoreCase) && i + 1 < args.Length)
                 {
-                    string filename = args[++i];
-                    filename = FilesValidator.CheckPathTraversalAbsolute(filename);
+                    string filename = FilesValidator.CheckPathTraversal(args[++i]);
 
                     var fi = new FileInfo(filename);
                     if (!Directory.Exists(fi.DirectoryName))
@@ -154,14 +193,14 @@ namespace PingCastle
                     if (i + 1 >= args.Length)
                     {
                         WriteInRed("argument for --api-endpoint is mandatory");
-                        return;
+                        ExitCodes.MissingApiEndpointArgument.Exit();
                     }
                     settings.apiEndpoint = args[++i];
 
                     if (!Uri.TryCreate(settings.apiEndpoint, UriKind.Absolute, out _))
                     {
                         WriteInRed("unable to convert api-endpoint into an URI");
-                        return;
+                        ExitCodes.InvalidApiEndpointArgument.Exit();
                     }
                 }
                 else if (args[i] == "--api-key")
@@ -169,7 +208,7 @@ namespace PingCastle
                     if (i + 1 >= args.Length)
                     {
                         WriteInRed("argument for --api-key is mandatory");
-                        return;
+                        ExitCodes.MissingApiKeyArgument.Exit();
                     }
                     settings.apiKey = args[++i];
                 }
@@ -191,7 +230,9 @@ namespace PingCastle
                 }
 
                 if (!IsValidLicense(license, args.Length == 0))
-                    return;
+                {
+                    ExitCodes.InvalidLicense.Exit();
+                }
 
                 LicenseCache.Instance.StoreLicense(license);
             }
@@ -206,7 +247,7 @@ namespace PingCastle
                     Console.WriteLine("=============================================================================");
                     Console.ReadKey();
                 }
-                return;
+                ExitCodes.Success.Exit();
             }
 
             if (license.EndTime < DateTime.MaxValue)
@@ -234,14 +275,14 @@ namespace PingCastle
 
             requiredSettings = new Dictionary<PossibleTasks, string[]>
             {
-                {PossibleTasks.ADHealthCheck,                  new string[] {"Server"}},
+                {PossibleTasks.ADHealthCheck,            new string[] {"Server"}},
                 {PossibleTasks.ADConso,                  new string[] {"Directory"}},
-                {PossibleTasks.Carto,                  new string[] {"Server"}},
-                {PossibleTasks.Regen,                  new string[] {"File"}},
-                {PossibleTasks.Reload,                  new string[] {"File"}},
-                {PossibleTasks.UploadAllRports,                  new string[] {"Directory"}},
-                {PossibleTasks.FakeReport,                  new string[] {"Directory"}},
-                {PossibleTasks.CloudHealthCheck,        new string[] {"AzureADCredential"}},
+                {PossibleTasks.Carto,                    new string[] {"Server"}},
+                {PossibleTasks.Regen,                    new string[] {"File"}},
+                {PossibleTasks.Reload,                   new string[] {"File"}},
+                {PossibleTasks.UploadAllRports,          new string[] {"Directory"}},
+                {PossibleTasks.FakeReport,               new string[] {"Directory"}},
+                {PossibleTasks.CloudHealthCheck,         new string[] {"AzureADCredential"}},
                 {PossibleTasks.Scanner,                  new string[] {"Scanner"}},
                 {PossibleTasks.Export,                   new string[] {"Export"}},
             };
@@ -251,29 +292,45 @@ namespace PingCastle
             _userInterface.Header = BuildHeader();
 
             if (!ParseCommandLine(args))
-                return;
+            {
+                ExitCodes.InvalidCommandLineArguments.Exit();
+            }
+
             // Trace to file or console may be enabled here
             Trace.WriteLine("[New run]" + DateTime.Now.ToString("u"));
             Trace.WriteLine("PingCastle version " + _version.ToString(4));
             Trace.WriteLine("Running on dotnet:" + Environment.Version);
-            if (!String.IsNullOrEmpty(license.DomainLimitation) && !Tasks.compareStringWithWildcard(license.DomainLimitation, settings.Server))
+
+            // Validate domain limitation pattern is well-formed (V3 licenses only)
+            string validationError = license.GetDomainValidationError();
+            if (!string.IsNullOrEmpty(validationError))
             {
-                WriteInRed("Limitations applies to the --server argument (" + license.DomainLimitation + ")");
-                return;
+                WriteInRed($"The license contains an invalid domain limitation: {validationError}");
+                WriteInRed("Please contact support for a corrected license.");
+                ExitCodes.InvalidLicenseDomainPattern.Exit();
             }
-            if (!String.IsNullOrEmpty(license.CustomerNotice))
+
+            // Check if --server argument matches domain limitation (V3 licenses only)
+            if (!string.IsNullOrEmpty(settings.Server) && !license.IsAllowedDomain(settings.Server))
+            {
+                string patterns = license.GetDomainLimitationPatterns();
+                WriteInRed($"The --server argument '{settings.Server}' does not match the license domain limitation: '{patterns}'");
+                WriteInRed("Please check your license or contact support.");
+                ExitCodes.DomainNotAllowed.Exit();
+            }
+
+            if (!string.IsNullOrEmpty(license.CustomerNotice))
             {
                 Console.WriteLine(license.CustomerNotice);
             }
 
-
-            if (!settings.CheckArgs())
-                return;
-
             foreach (var a in requestedActions)
             {
                 var r = actions[a].Invoke();
-                if (!r) return;
+                if (!r)
+                {
+                    ExitCodes.UnknownErrorSeeConsole.Exit();
+                }
             }
             tasks.CompleteTasks();
         }
@@ -321,7 +378,7 @@ namespace PingCastle
             PingCastle.Rules.RuleSet<HealthcheckData>.LoadCustomRules();
         }
 
-        const string BasicEditionLicense = "PC2H4sIAAAAAAAEAGNkYGDgAGIGh5WeJjfuMDIDmWlA7MZQxJAKhAoMrgwpDJkMJUCcz5AH5OcD5RUYAoD8PIZ0BmeGRIZioGwOWK0uEPsBVZQA6TQgXQSkk4F0LhCmAnnJQF2JQLUKDKVAXakMLECbuIDYCWxKJlAeBBqAuJfVrf77orLNE2b86WjactPJfqtHXXzbH+mQG58LcwXOGG64//ecYUypoFV7wwvW1M/f719VW3EgZV/4t/8zN+ty6zSs8p4/0SnlaoX1R4tDbNON5aUy5t6wX3nL6K15mfsRfmfZy8eN/WZsu9orOnVJmZ3jobOsn+5bvZoZe+WS+6pkR8mPPwEptQi2GAEAAA==";
+        const string BasicEditionLicense = "PC2H4sIAAAAAAAACmNkYGDgAGIGB3vlteH3GJmBzDQgdmMoYkgFQgUGV4YUhkyGEiDOZ8gD8vOB8goMAUB+HkM6gzNDIkMxUDYHrFYXiP2AKkqAdBqQLgLSyUA6FwhTgbxkoK5EoFoFhlKgrlQGFqBNXEDsBDYlEygPAg1AXLb/itWtM6uf7ly/uZtv7SxPHttDPQaqPxWM5uew1ysdKlvsv1tPpbv7wpVuWae1iY+WJfj+tHE6YyfeVlO+INohVypO5kXTUv4WOzHdZ3PeTuaIXpS1b5+0Zu0Bbz5DDfMVpo6FP8pt76S4F39L8snU2/pDXXNVgTCvksBdq0PrSh7L+q0HAKu1tDAYAQAA";
         string _serialNumber;
         public string GetSerialNumber()
         {
@@ -351,7 +408,8 @@ namespace PingCastle
                 Trace.WriteLine("Using the license defined in the config file");
                 try
                 {
-                    _ = new ADHealthCheckingLicense(_serialNumber);
+                    var license = new ADHealthCheckingLicense(_serialNumber);
+                    license.Verify();
                     return _serialNumber;
                 }
                 catch (Exception ex)
@@ -374,7 +432,8 @@ namespace PingCastle
             _serialNumber = BasicEditionLicense;
             try
             {
-                _ = new ADHealthCheckingLicense(_serialNumber);
+                var license = new ADHealthCheckingLicense(_serialNumber);
+                license.Verify();
             }
             catch (Exception)
             {
@@ -547,7 +606,6 @@ namespace PingCastle
                             DisplayHelp();
                             return false;
                         case "--I-swear-I-paid-win7-support":
-                            //Healthcheck.Rules.HeatlcheckRuleStaledObsoleteWin7.IPaidSupport = true;
                             Console.WriteLine("Sorry Extended support for Win7 is not available anymmore.\n--I-swear-I-paid-win7-support is ignored");
                             break;
                         case "--I-swear-I-paid-win8-support":
@@ -643,7 +701,7 @@ namespace PingCastle
                                 return false;
                             }
 
-                            tasks.NodesToInvestigate = new List<string>(File.ReadAllLines(FilesValidator.CheckPathTraversalAbsolute(args[++i])));
+                            tasks.NodesToInvestigate = new List<string>(File.ReadAllLines(FilesValidator.CheckPathTraversal(args[++i])));
                             break;
                         case "--notifyMail":
                             if (i + 1 >= args.Length)
@@ -692,7 +750,7 @@ namespace PingCastle
                                 WriteInRed("argument for --p12-file is mandatory");
                                 return false;
                             }
-                            settings.SetP12File(args[++i]);
+                            settings.SetP12File(FilesValidator.CheckPathTraversal(args[++i]));
                             break;
                         case "--p12-pass":
                             if (i + 1 >= args.Length)
@@ -700,7 +758,7 @@ namespace PingCastle
                                 WriteInRed("argument for --p12-pass is mandatory");
                                 return false;
                             }
-                            settings.SetP12Pass(FilesValidator.CheckPathTraversalAbsolute(args[++i]));
+                            settings.SetP12Pass(FilesValidator.CheckPathTraversal(args[++i]));
                             break;
                         case "--password":
                             if (i + 1 >= args.Length)
@@ -733,7 +791,7 @@ namespace PingCastle
                                 WriteInRed("argument for --private-key is mandatory");
                                 return false;
                             }
-                            settings.SetPrivateKey(FilesValidator.CheckPathTraversalAbsolute(args[++i]));
+                            settings.SetPrivateKey(FilesValidator.CheckPathTraversal(args[++i]));
                             break;
                         case "--protocol":
                             if (i + 1 >= args.Length)
@@ -1275,8 +1333,11 @@ namespace PingCastle
             Console.WriteLine("  --api-key  <key>    : and using the api key as registered");
             Console.WriteLine("");
             Console.WriteLine("Common options when connecting to the AD");
-            Console.WriteLine("  --server <server>   : use this server (default: current domain controller)");
-            Console.WriteLine("                        the special value * or *.forest do the healthcheck for all domains");
+            Console.WriteLine("  --server <server>     Target a DC or domain. Default: current domain");
+            Console.WriteLine("                        dc01.domain.local   -> run against this DC");
+            Console.WriteLine("                        domain.local        -> run against this domain");
+            Console.WriteLine("                        *                   -> all domains in the forest");
+            Console.WriteLine("                        *.domain.local      -> domain + all subdomains");
             Console.WriteLine("  --port <port>       : the port to use for ADWS or LDAP (default: 9389 or 389)");
             Console.WriteLine("  --user <user>       : use this user (default: integrated authentication)");
             Console.WriteLine("  --password <pass>   : use this password (default: asked on a secure prompt)");
@@ -1399,8 +1460,32 @@ namespace PingCastle
             Console.WriteLine("                        Note: do not forget to set --level Full to send all the information available");
             Console.WriteLine("");
             Console.WriteLine("  --export-rules : export all rule in a single xml file");
+            Console.WriteLine("");
+            Console.WriteLine("Exit Codes:");
+            Console.WriteLine("  0 : Success - operation completed successfully");
+            Console.WriteLine("  1 : InvalidLicenseDomainPattern - license contains invalid domain limitation pattern");
+            Console.WriteLine("  2 : DomainNotAllowed - specified domain not allowed by license restrictions");
+            Console.WriteLine("  3 : MissingApiEndpointArgument - --api-endpoint requires a URL argument");
+            Console.WriteLine("  4 : InvalidApiEndpointArgument - --api-endpoint URL is not valid");
+            Console.WriteLine("  5 : MissingApiKeyArgument - --api-key requires a key argument");
+            Console.WriteLine("  6 : InvalidLicense - license validation failed or expired");
+            Console.WriteLine("  7 : InvalidCommandLineArguments - command line parsing failed");
+            Console.WriteLine("  8 : UnknownErrorSeeConsole - an error occurred, check console output or logs if logging enabled");
+        }
+    }
 
-
+    /// <summary>
+    /// Utility extension for cleaner use of Exit Codes.
+    /// </summary>
+    public static class ExitCodeExtensions
+    {
+        /// <summary>
+        /// Utility wrapper to allow low-friction use of exit codes.
+        /// </summary>
+        /// <param name="exitCode"></param>
+        public static void Exit(this Program.ExitCodes exitCode)
+        {
+            Environment.Exit((int)exitCode);
         }
     }
 

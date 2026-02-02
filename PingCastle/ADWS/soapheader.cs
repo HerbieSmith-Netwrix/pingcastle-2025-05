@@ -8,7 +8,6 @@ using System;
 using System.Runtime.InteropServices;
 using System.ServiceModel;
 using System.ServiceModel.Channels;
-using System.ServiceModel.Configuration;
 using System.ServiceModel.Description;
 using System.ServiceModel.Dispatcher;
 
@@ -55,7 +54,7 @@ namespace PingCastle.ADWS
     }
 
     [ComVisible(false)]
-    internal class SoapHeaderBehavior : BehaviorExtensionElement, IEndpointBehavior
+    internal class SoapHeaderBehavior : IEndpointBehavior
     {
         SoapHeader[] Headers;
         public SoapHeaderBehavior(SoapHeader[] headers)
@@ -70,7 +69,7 @@ namespace PingCastle.ADWS
         public void ApplyClientBehavior(ServiceEndpoint endpoint, ClientRuntime clientRuntime)
         {
             HeaderInspector inspector = new HeaderInspector(Headers);
-            clientRuntime.MessageInspectors.Add(inspector);
+            clientRuntime.ClientMessageInspectors.Add(inspector);
         }
 
         public void ApplyDispatchBehavior(ServiceEndpoint endpoint, EndpointDispatcher endpointDispatcher)
@@ -79,20 +78,6 @@ namespace PingCastle.ADWS
 
         public void Validate(ServiceEndpoint endpoint)
         {
-        }
-
-        protected override object CreateBehavior()
-        {
-            return new SoapHeaderBehavior(Headers);
-        }
-
-        public override Type BehaviorType
-        {
-            get
-            {
-                Type t = typeof(SoapHeaderBehavior);
-                return t;
-            }
         }
     }
 }

@@ -22,7 +22,7 @@ namespace PingCastle.misc
         [DllImport("Kernel32.dll", SetLastError = true)]
         public static extern bool CloseHandle(IntPtr hObject);
 
-        //https://docs.microsoft.com/en-us/windows/win32/api/winnt/ne-winnt-token_information_class
+        //https://learn.microsoft.com/en-us/windows/win32/api/winnt/ne-winnt-token_information_class
         public enum TOKEN_INFORMATION_CLASS
         {
             TokenUser = 1,
@@ -56,7 +56,7 @@ namespace PingCastle.misc
             MaxTokenInfoClass
         }
 
-        //https://docs.microsoft.com/en-us/windows/win32/api/winnt/ne-winnt-token_elevation_type
+        //https://learn.microsoft.com/en-us/windows/win32/api/winnt/ne-winnt-token_elevation_type
         public enum TOKEN_ELEVATION_TYPE
         {
             TokenElevationTypeDefault = 1,

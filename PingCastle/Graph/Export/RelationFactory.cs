@@ -1,4 +1,4 @@
-﻿//
+//
 // Copyright (c) Ping Castle. All rights reserved.
 // https://www.pingcastle.com
 //
@@ -614,64 +614,67 @@ namespace PingCastle.Graph.Export
         private void AnalyzeLoginLogoffScript(string gpoPath, string applyTo, string artefactPath)
         {
             string configPath = gpoPath + "\\" + applyTo + "\\" + artefactPath;
-            using (var file2 = adws.FileConnection.GetFileStream(configPath))
-            using (var file = new System.IO.StreamReader(file2))
+            adws.FileConnection.RunImpersonatedIfNeeded(() =>
             {
-
-                string line = null;
-                int state = 0;
-                Dictionary<string, string> logonscript = new Dictionary<string, string>();
-                Dictionary<string, string> logoffscript = new Dictionary<string, string>();
-                while ((line = file.ReadLine()) != null)
+                using (var file2 = adws.FileConnection.GetFileStream(configPath))
+                using (var file = new System.IO.StreamReader(file2))
                 {
-                    if (line.StartsWith("[Logon]", StringComparison.InvariantCultureIgnoreCase))
+                    string line = null;
+                    int state = 0;
+                    Dictionary<string, string> logonscript = new Dictionary<string, string>();
+                    Dictionary<string, string> logoffscript = new Dictionary<string, string>();
+                    while ((line = file.ReadLine()) != null)
                     {
-                        state = 1;
-                    }
-                    else if (line.StartsWith("[Logoff]", StringComparison.InvariantCultureIgnoreCase))
-                    {
-                        state = 2;
-                    }
-                    else if (line.StartsWith("[", StringComparison.InvariantCultureIgnoreCase))
-                    {
-                        state = 0;
-                    }
-                    else if (state > 0)
-                    {
-                        int pos = line.IndexOf('=');
-                        if (pos >= 1)
+                        if (line.StartsWith("[Logon]", StringComparison.InvariantCultureIgnoreCase))
                         {
-                            string key = line.Substring(0, pos).ToLowerInvariant();
-                            string value = line.Substring(pos + 1).Trim();
-                            if (state == 1)
+                            state = 1;
+                        }
+                        else if (line.StartsWith("[Logoff]", StringComparison.InvariantCultureIgnoreCase))
+                        {
+                            state = 2;
+                        }
+                        else if (line.StartsWith("[", StringComparison.InvariantCultureIgnoreCase))
+                        {
+                            state = 0;
+                        }
+                        else if (state > 0)
+                        {
+                            int pos = line.IndexOf('=');
+                            if (pos >= 1)
                             {
-                                logonscript[key] = value;
-                            }
-                            else if (state == 2)
-                            {
-                                logoffscript[key] = value;
+                                string key = line.Substring(0, pos).ToLowerInvariant();
+                                string value = line.Substring(pos + 1).Trim();
+                                if (state == 1)
+                                {
+                                    logonscript[key] = value;
+                                }
+                                else if (state == 2)
+                                {
+                                    logoffscript[key] = value;
+                                }
                             }
                         }
                     }
-                }
-                for (int i = 0; ; i++)
-                {
-                    if (!logonscript.ContainsKey(i + "cmdline"))
-                    {
-                        break;
-                    }
-                    AnalyzeScript(configPath, logonscript[i + "cmdline"], (string.Equals(applyTo, "Machine", StringComparison.InvariantCultureIgnoreCase) ? RelationType.Startup_Script : RelationType.Logon_Script));
 
-                }
-                for (int i = 0; ; i++)
-                {
-                    if (!logoffscript.ContainsKey(i + "cmdline"))
+                    for (int i = 0; ; i++)
                     {
-                        break;
+                        if (!logonscript.ContainsKey(i + "cmdline"))
+                        {
+                            break;
+                        }
+                        AnalyzeScript(configPath, logonscript[i + "cmdline"], (string.Equals(applyTo, "Machine", StringComparison.InvariantCultureIgnoreCase) ? RelationType.Startup_Script : RelationType.Logon_Script));
                     }
-                    AnalyzeScript(configPath, logoffscript[i + "cmdline"], (string.Equals(applyTo, "Machine", StringComparison.InvariantCultureIgnoreCase) ? RelationType.ShutdownScript : RelationType.Logoff_Script));
+
+                    for (int i = 0; ; i++)
+                    {
+                        if (!logoffscript.ContainsKey(i + "cmdline"))
+                        {
+                            break;
+                        }
+                        AnalyzeScript(configPath, logoffscript[i + "cmdline"], (string.Equals(applyTo, "Machine", StringComparison.InvariantCultureIgnoreCase) ? RelationType.ShutdownScript : RelationType.Logoff_Script));
+                    }
                 }
-            }
+            });
         }
 
         private void AnalyzeScript(string filenode, string script, RelationType relationType)
@@ -708,51 +711,54 @@ namespace PingCastle.Graph.Export
             string path = gpoPath + "\\" + applyTo + "\\" + artefactPath;
             if (adws.FileConnection.FileExists(path))
             {
-                using (var file2 = adws.FileConnection.GetFileStream(path))
-                using (var file = new System.IO.StreamReader(file2))
+                adws.FileConnection.RunImpersonatedIfNeeded(() =>
                 {
-                    string line;
-                    while ((line = file.ReadLine()) != null)
+                    using (var file2 = adws.FileConnection.GetFileStream(path))
+                    using (var file = new System.IO.StreamReader(file2))
                     {
-                        foreach (RelationType privilege in privileges)
+                        string line;
+                        while ((line = file.ReadLine()) != null)
                         {
-                            if (line.StartsWith(privilege.ToString(), StringComparison.InvariantCultureIgnoreCase))
+                            foreach (RelationType privilege in privileges)
                             {
-                                int pos = line.IndexOf('=') + 1;
-                                if (pos > 1)
+                                if (line.StartsWith(privilege.ToString(), StringComparison.InvariantCultureIgnoreCase))
                                 {
-                                    string value = line.Substring(pos).Trim();
-                                    string[] values = value.Split(',');
-                                    foreach (string user in values)
+                                    int pos = line.IndexOf('=') + 1;
+                                    if (pos > 1)
                                     {
-                                        // ignore empty privilege assignment
-                                        if (String.IsNullOrEmpty(user))
-                                            continue;
-                                        // ignore well known sid
-                                        // 
-                                        if (user.StartsWith("*S-1-5-32-", StringComparison.InvariantCultureIgnoreCase))
+                                        string value = line.Substring(pos).Trim();
+                                        string[] values = value.Split(',');
+                                        foreach (string user in values)
                                         {
-                                            continue;
-                                        }
-                                        // Local system
-                                        if (user.StartsWith("*S-1-5-18", StringComparison.InvariantCultureIgnoreCase))
-                                        {
-                                            continue;
-                                        }
-                                        if (user.StartsWith("*S-1", StringComparison.InvariantCultureIgnoreCase))
-                                        {
-                                            Storage.InsertRelation(user.Substring(1), MappingType.Sid, gpoPath, MappingType.FileName, privilege);
-                                        }
-                                        else
-                                        {
-                                            Storage.InsertRelation(user, MappingType.DistinguishedName, gpoPath, MappingType.FileName, privilege);
+                                            // ignore empty privilege assignment
+                                            if (String.IsNullOrEmpty(user))
+                                                continue;
+                                            // ignore well known sid
+                                            //
+                                            if (user.StartsWith("*S-1-5-32-", StringComparison.InvariantCultureIgnoreCase))
+                                            {
+                                                continue;
+                                            }
+                                            // Local system
+                                            if (user.StartsWith("*S-1-5-18", StringComparison.InvariantCultureIgnoreCase))
+                                            {
+                                                continue;
+                                            }
+                                            if (user.StartsWith("*S-1", StringComparison.InvariantCultureIgnoreCase))
+                                            {
+                                                Storage.InsertRelation(user.Substring(1), MappingType.Sid, gpoPath, MappingType.FileName, privilege);
+                                            }
+                                            else
+                                            {
+                                                Storage.InsertRelation(user, MappingType.DistinguishedName, gpoPath, MappingType.FileName, privilege);
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
                     }
-                }
+                });
             }
         }
 

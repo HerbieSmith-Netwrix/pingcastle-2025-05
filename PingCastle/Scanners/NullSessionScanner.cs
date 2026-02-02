@@ -4,6 +4,7 @@
 //
 // Licensed under the Non-Profit OSL. See LICENSE file in the project root for full license information.
 //
+using PingCastle.ADWS;
 using PingCastle.RPC;
 using System;
 using System.Diagnostics;
@@ -14,6 +15,10 @@ namespace PingCastle.Scanners
 {
     public class NullSessionScanner : ScannerBase
     {
+        public NullSessionScanner(IIdentityProvider identityProvider)
+            : base(identityProvider)
+        {
+        }
 
         public override string Name { get { return "nullsession"; } }
         public override string Description { get { return "Check if null sessions are enabled and provide example(s)."; } }

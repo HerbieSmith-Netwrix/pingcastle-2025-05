@@ -14,31 +14,24 @@ using System.Runtime.InteropServices;
 
 namespace PingCastle.ADWS
 {
-    public delegate void WorkOnReturnedObjectByADWS(ADItem Object);
-
-    public enum ADConnectionType
+    public class ADWebService : IADWebService
     {
-        Default = -1,
-        ADWSThenLDAP = 0,
-        ADWSOnly = 1,
-        LDAPOnly = 2,
-        LDAPThenADWS = 3,
-        Unix = 4,
-    }
 
-    public class ADWebService : IDisposable, IADConnection
-    {
+        private readonly IWindowsNativeMethods _nativeMethods;
+        private readonly IIdentityProvider _identityProvider;
 
         static ADWebService()
         {
             ConnectionType = ADConnectionType.Default;
         }
 
-        public ADWebService(string server, int port, NetworkCredential credential)
+        public ADWebService(string server, int port, NetworkCredential credential, IIdentityProvider identityProvider, IWindowsNativeMethods nativeMethods)
         {
             Server = server;
             Port = port;
             Credential = credential;
+            _identityProvider = identityProvider;
+            _nativeMethods = nativeMethods;
             Trace.WriteLine("Before establishing connection");
             if (ConnectionType == ADConnectionType.Default)
             {
@@ -137,7 +130,7 @@ namespace PingCastle.ADWS
                     break;
                 case ADConnectionType.Unix:
                     Trace.WriteLine("Trying Linux connection");
-                    var linuxConnection = new LinuxConnection(Server, Port, Credential);
+                    var linuxConnection = new LinuxConnection(Server, Port, Credential, _identityProvider);
                     linuxConnection.EstablishConnection();
                     Trace.WriteLine("Linux connection successful");
                     connection = linuxConnection;
@@ -156,7 +149,7 @@ namespace PingCastle.ADWS
             ADWSConnection adwsConnection = null;
             try
             {
-                adwsConnection = new ADWSConnection(Server, Port, Credential);
+                adwsConnection = new ADWSConnection(Server, Port, Credential, _nativeMethods, _identityProvider);
             }
             catch (Exception ex)
             {
@@ -171,7 +164,7 @@ namespace PingCastle.ADWS
 
         IADConnection EstablishConnectionWithLDAP()
         {
-            LDAPConnection ldapConnection = new LDAPConnection(Server, Port, Credential);
+            LDAPConnection ldapConnection = new LDAPConnection(Server, Port, Credential, _nativeMethods, _identityProvider);
             Trace.WriteLine("Trying LDAP connection");
             ldapConnection.EstablishConnection();
             Trace.WriteLine("LDAP connection successful");
@@ -205,35 +198,6 @@ namespace PingCastle.ADWS
             return DomainInfo;
         }
 
-        public class OUExploration : IComparable<OUExploration>
-        {
-            public string OU { get; set; }
-            public string Scope { get; set; }
-            public int Level { get; set; }
-            public OUExploration(string ou, string scope, int level)
-            {
-                OU = ou;
-                Scope = scope;
-                Level = level;
-            }
-            // revert an OU string order to get a string orderable
-            // ex: OU=myOU,DC=DC   => DC=DC,OU=myOU
-            private string GetSortKey(string ou)
-            {
-                string[] apart = ou.Split(',');
-                string[] apart1 = new string[apart.Length];
-                for (int i = 0; i < apart.Length; i++)
-                {
-                    apart1[i] = apart[apart.Length - 1 - i];
-                }
-                return String.Join(",", apart1);
-            }
-            public int CompareTo(OUExploration other)
-            {
-                return String.Compare(GetSortKey(OU), GetSortKey(other.OU));
-            }
-        }
-
         public List<OUExploration> BuildOUExplorationList(string OU, int NumberOfDepthForSplit)
         {
             List<OUExploration> output = new List<OUExploration>();
@@ -245,7 +209,7 @@ namespace PingCastle.ADWS
             List<string> OUToExplore = new List<string>();
             OUToExplore.Add(OU);
             string[] properties = new string[] {
-                        "distinguishedName",
+                        "distinguishedname",
             };
             List<string> futureOuToExplore = null;
             for (int i = 0; i < NumberOfDepthForSplit; i++)
@@ -284,9 +248,7 @@ namespace PingCastle.ADWS
             Enumerate(null, distinguishedName, filter, properties, callback, scope);
         }
 
-        public delegate void Action();
-
-        public void Enumerate(Action preambleWithReentry, string distinguishedName, string filter, string[] properties, WorkOnReturnedObjectByADWS callback, string scope)
+        public void Enumerate(IADWebService.Action preambleWithReentry, string distinguishedName, string filter, string[] properties, WorkOnReturnedObjectByADWS callback, string scope)
         {
             if (preambleWithReentry != null)
                 preambleWithReentry();

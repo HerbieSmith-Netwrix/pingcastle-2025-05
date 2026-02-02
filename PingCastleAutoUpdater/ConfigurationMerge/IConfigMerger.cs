@@ -1,9 +1,14 @@
 namespace PingCastleAutoUpdater.ConfigurationMerge
 {
-    using System.Xml.Linq;
+    using System.Collections.Generic;
+    using System.Xml;
 
     public interface IConfigMerger
     {
-        XDocument MergeConfigs(XDocument target, XDocument source);
+        IReadOnlyList<string> MergedElements { get; }
+
+        IReadOnlyList<string> NewElements { get; }
+
+        XmlDocument MergeConfigs(XmlDocument target, XmlDocument source);
     }
 }

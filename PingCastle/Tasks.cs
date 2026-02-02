@@ -1,37 +1,45 @@
-﻿//
+//
 // Copyright (c) Ping Castle. All rights reserved.
 // https://www.pingcastle.com
 //
 // Licensed under the Non-Profit OSL. See LICENSE file in the project root for full license information.
 //
-using PingCastle.Data;
-using PingCastle.Exports;
-using PingCastle.Healthcheck;
-using PingCastle.misc;
-using PingCastle.Report;
-using PingCastle.Rules;
-using PingCastle.Scanners;
-using PingCastle.Cloud.Data;
 using System;
 using System.Collections.Generic;
+using System.Configuration;
 using System.Diagnostics;
 using System.IO;
 using System.IO.Compression;
+using System.Linq;
 using System.Net;
 using System.Net.Mail;
 using System.Reflection;
+using System.Security.Cryptography;
 using System.Text;
 using System.Text.RegularExpressions;
 using System.Threading;
-using TinyJson;
-using System.Xml.Serialization;
 using System.Xml;
+using System.Xml.Serialization;
+using Microsoft.Extensions.Options;
+using PingCastle.Cloud.Data;
+using PingCastle.Data;
+using PingCastle.Exports;
+using PingCastle.Factories;
+using PingCastle.Healthcheck;
+using PingCastle.Report;
+using PingCastle.Rules;
+using PingCastle.Scanners;
 using PingCastle.UserInterface;
-using PingCastle.Cloud.MsGraph;
-using System.Security.Cryptography;
+using PingCastle.Utility;
+using PingCastleCommon.Options;
+using TinyJson;
 
 namespace PingCastle
 {
+    using ADWS;
+    using PingCastleCommon.Healthcheck;
+    using PingCastleCommon.Utility;
+
     public class Tasks
     {
         public ADHealthCheckingLicense License { get; set; }
@@ -52,15 +60,24 @@ namespace PingCastle
 
         private RuntimeSettings Settings;
         private AgentSettings _apiAgentSettings;
+        private readonly IWindowsNativeMethods _nativeMethods;
+        private readonly IIdentityProvider _identityProvider;
+        private readonly Smb2ProtocolTest _smb2Test;
+        private readonly IOptions<SmtpOptions> _smtpOptions;
 
-        public Tasks(RuntimeSettings settings)
+        public Tasks(RuntimeSettings settings, IWindowsNativeMethods nativeMethods, IIdentityProvider identityProvider, Smb2ProtocolTest smb2Test, IOptions<SmtpOptions> smtpOptions)
         {
             Settings = settings;
+            _nativeMethods = nativeMethods;
+            _identityProvider = identityProvider;
+            ArgumentNullException.ThrowIfNull(smb2Test);
+            _smb2Test = smb2Test;
+            _smtpOptions = smtpOptions;
         }
 
         public bool GenerateKeyTask()
         {
-            return StartTask("Generate Key",
+            return RunTask("Generate Key",
                     () =>
                     {
                         HealthCheckEncryption.GenerateRSAKey();
@@ -69,10 +86,10 @@ namespace PingCastle
 
         public bool GenerateAzureADKeyTask()
         {
-            return StartTask("Generate Entra ID Key",
+            return RunTask("Generate Entra ID Key",
                     () =>
                     {
-                    Ui.DisplayMessage(new List<string> { "Go to portal.azure.com",
+                        Ui.DisplayMessage(new List<string> { "Go to portal.azure.com",
                         "Open Microsoft Entra ID",
                         "Go to App registrations",
                         "Select new registration and create an app.",
@@ -94,21 +111,32 @@ namespace PingCastle
 
         public bool ScannerTask()
         {
-            return StartTask("Scanner",
-                    () =>
-                    {
-                        PropertyInfo pi = Settings.Scanner.GetProperty("Name");
-                        IScanner scanner = PingCastleFactory.LoadScanner(Settings.Scanner);
-                        string name = pi.GetValue(scanner, null) as string;
-                        DisplayAdvancement("Running scanner " + name);
-                        scanner.Initialize(Settings);
-                        if (scanner.QueryForAdditionalParameterInInteractiveMode() != DisplayState.Run)
-                            return;
-                        string file = "ad_scanner_" + name + "_" + Settings.Server + ".txt";
-                        scanner.Export(file);
-                        DisplayAdvancement("Results saved to " + new FileInfo(file).FullName);
-                    }
-                );
+            return RunTask("Scanner", () =>
+            {
+                if (!License.IsAllowedDomain(Settings.Server))
+                {
+                    Ui.DisplayWarning("Domain [" + Settings.Server + "] not allowed due to license domain limitations.");
+                    Program.ExitCodes.DomainNotAllowed.Exit();
+                }
+
+                PropertyInfo pi = Settings.Scanner.GetProperty("Name");
+                IScanner scanner = PingCastleFactory.LoadScanner(Settings.Scanner);
+                string name = pi.GetValue(scanner, null) as string;
+                DisplayAdvancement("Running scanner " + name);
+                scanner.Initialize(Settings);
+
+                // Only call QueryForAdditionalParameterInInteractiveMode if Server is not already set
+                if (string.IsNullOrEmpty(Settings.Server) 
+                    && scanner.QueryForAdditionalParameterInInteractiveMode() != DisplayState.Run)
+                {
+                    return;
+                }
+
+                string file = "ad_scanner_" + name + "_" + Settings.Server + ".txt";
+                scanner.Export(file);
+                DisplayAdvancement("Results saved to " + new FileInfo(file).FullName);
+            }
+        );
         }
 
         public bool CartoTask()
@@ -119,20 +147,20 @@ namespace PingCastle
         public bool CartoTask(bool PerformHealthCheckGenerateDemoReports = false)
         {
             List<HealthcheckAnalyzer.ReachableDomainInfo> domains = null;
-            StartTask("Exploration",
+            RunTask("Exploration",
                 () =>
                 {
-                    HealthcheckAnalyzer hcroot = new HealthcheckAnalyzer();
+                    HealthcheckAnalyzer hcroot = new HealthcheckAnalyzer(_nativeMethods, _identityProvider, _smb2Test);
                     hcroot.LimitHoneyPot = License.IsBasic();
                     domains = hcroot.GetAllReachableDomains(Settings.Port, Settings.Credential);
-                   Ui.DisplayHighlight("List of domains that will be queried");
+                    Ui.DisplayHighlight("List of domains that will be queried");
                     foreach (var domain in domains)
                     {
                         Ui.DisplayMessage(domain.domain);
                     }
                 });
             var consolidation = new PingCastleReportCollection<HealthcheckData>();
-            StartTask("Examining all domains in parallele (this can take a few minutes)",
+            RunTask("Examining all domains in parallele (this can take a few minutes)",
             () =>
             {
                 BlockingQueue<string> queue = new BlockingQueue<string>(30);
@@ -148,8 +176,14 @@ namespace PingCastle
                             if (!queue.Dequeue(out domain)) break;
                             try
                             {
+                                if (!License.IsAllowedDomain(domain))
+                                {
+                                    Ui.DisplayWarning("Skipping domain [" + domain + "] due to license domain limitations");
+                                    break;
+                                }
+
                                 Ui.DisplayMessage("[" + DateTime.Now.ToLongTimeString() + "] " + "Starting the analysis of " + domain);
-                                HealthcheckAnalyzer hc = new HealthcheckAnalyzer();
+                                HealthcheckAnalyzer hc = new HealthcheckAnalyzer(_nativeMethods, _identityProvider, _smb2Test);
                                 hc.LimitHoneyPot = License.IsBasic();
 
                                 var data = hc.GenerateCartoReport(domain, Settings.Port, Settings.Credential, Settings.AnalyzeReachableDomains);
@@ -204,7 +238,7 @@ namespace PingCastle
                 Trace.WriteLine("Performing demo report transformation");
                 consolidation = PingCastleReportHelper<HealthcheckData>.TransformReportsToDemo(consolidation);
             }
-            if (!StartTask("Healthcheck consolidation",
+            if (!RunTask("Healthcheck consolidation",
                 () =>
                 {
                     consolidation.EnrichInformation();
@@ -236,6 +270,7 @@ namespace PingCastle
                 try
                 {
                     var license = new ADHealthCheckingLicense(_apiAgentSettings.License);
+                    license.Verify();
                     license.TraceInfo();
 
                     if (license.EndTime > DateTime.Now)
@@ -367,10 +402,11 @@ namespace PingCastle
 
         public bool GenerateFakeReport()
         {
-            return StartTask("Generate fake reports",
+            return RunTask("Generate fake reports",
                     () =>
                     {
-                        var fakegenerator = new FakeHealthCheckDataGenerator();
+                        var accountProcessor = new AccountDataProcessor();
+                        var fakegenerator = new FakeHealthCheckDataGenerator(accountProcessor);
                         var hcconso = fakegenerator.GenerateData();
 
                         foreach (var pingCastleReport in hcconso)
@@ -395,7 +431,8 @@ namespace PingCastle
                         nodeAnalyzer.FullNodeMap = false;
                         nodeAnalyzer.CenterDomainForSimpliedGraph = Settings.CenterDomainForSimpliedGraph;
                         nodeAnalyzer.GenerateReportFile("ad_hc_summary_simple_node_map.html");
-                        var mapReport = new ReportNetworkMap();
+                        var hilbertGenerator = Program.ServiceProvider.GetService(typeof(IHilbertMapGenerator)) as IHilbertMapGenerator;
+                        var mapReport = new ReportNetworkMap(hilbertGenerator);
                         mapReport.GenerateReportFile(hcconso, License, "ad_hc_hilbert_map.html");
                     }
                 );
@@ -429,7 +466,7 @@ namespace PingCastle
 
         public bool GenerateRuleList()
         {
-            return StartTask("Export rules",
+            return RunTask("Export rules",
                     () =>
                     {
                         var rules = new List<ExportedRule>();
@@ -446,7 +483,6 @@ namespace PingCastle
                                 Rationale = r.Rationale,
                                 ReportLocation = r.ReportLocation,
                                 RiskId = r.RiskId,
-                                //RuleComputation = r.RuleComputation,
                                 Solution = r.Solution,
                                 TechnicalExplanation = r.TechnicalExplanation,
                                 Title = r.Title,
@@ -466,7 +502,6 @@ namespace PingCastle
                                 Rationale = r.Rationale,
                                 ReportLocation = r.ReportLocation,
                                 RiskId = r.RiskId,
-                                //RuleComputation = r.RuleComputation,
                                 Solution = r.Solution,
                                 TechnicalExplanation = r.TechnicalExplanation,
                                 Title = r.Title,
@@ -596,10 +631,10 @@ namespace PingCastle
         private List<string> GetListOfDomainToExploreFromGenericName(string server)
         {
             List<string> domains = new List<string>();
-            StartTask("Exploration",
+            RunTask("Exploration",
                 () =>
                 {
-                    HealthcheckAnalyzer hcroot = new HealthcheckAnalyzer();
+                    HealthcheckAnalyzer hcroot = new HealthcheckAnalyzer(_nativeMethods, _identityProvider, _smb2Test);
                     hcroot.LimitHoneyPot = License.IsBasic();
                     var reachableDomains = hcroot.GetAllReachableDomains(Settings.Port, Settings.Credential);
                     List<HealthcheckAnalyzer.ReachableDomainInfo> domainsfiltered = new List<HealthcheckAnalyzer.ReachableDomainInfo>();
@@ -625,6 +660,13 @@ namespace PingCastle
             return Regex.Match(toCompare, regex, RegexOptions.IgnoreCase).Success;
         }
 
+        /// <summary>
+        /// Validates if a domain pattern is valid according to RFC 1123 specifications.
+        /// Supports both simple domains (example.com) and wildcard domains (*.example.com).
+        /// Returns empty string if valid, error message if invalid.
+        /// </summary>
+        /// <param name="domain">Domain to validate (e.g., "example.com", "*.example.com")</param>
+        /// <returns>Empty string if valid; error message if invalid</returns>
         bool ShouldTheDomainBeNotExplored(string domainToCheck)
         {
             if (Settings.DomainToNotExplore == null)
@@ -642,11 +684,17 @@ namespace PingCastle
 
         HealthcheckData PerformTheAnalysis(string server)
         {
+            if (!License.IsAllowedDomain(server))
+            {
+                Ui.DisplayWarning("The domain [" + server + "] is not allowed due to license domain limitations.");
+                Program.ExitCodes.DomainNotAllowed.Exit();
+            }
+
             HealthcheckData pingCastleReport = null;
-            bool status = StartTask("Perform analysis for " + server,
+            bool status = RunTask("Perform analysis for " + server,
                 () =>
                 {
-                    var analyzer = new HealthcheckAnalyzer();
+                    var analyzer = new HealthcheckAnalyzer(_nativeMethods, _identityProvider, _smb2Test);
                     analyzer.LimitHoneyPot = License.IsBasic();
                     pingCastleReport = analyzer.PerformAnalyze(new PingCastleAnalyzerParameters()
                     {
@@ -677,7 +725,7 @@ namespace PingCastle
 
         public bool ConsolidationTask<T>() where T : IPingCastleReport
         {
-            return StartTask("PingCastle report consolidation (" + typeof(T).Name + ")",
+            return RunTask("PingCastle report consolidation (" + typeof(T).Name + ")",
                     () =>
                     {
                         var consolidation = PingCastleReportHelper<T>.LoadXmls(Settings.InputDirectory, Settings.FilterReportDate);
@@ -697,7 +745,8 @@ namespace PingCastle
                             nodeAnalyzer.FullNodeMap = false;
                             nodeAnalyzer.CenterDomainForSimpliedGraph = Settings.CenterDomainForSimpliedGraph;
                             nodeAnalyzer.GenerateReportFile("ad_hc_summary_simple_node_map.html");
-                            var mapReport = new ReportNetworkMap();
+                            var hilbertGenerator = Program.ServiceProvider.GetService(typeof(IHilbertMapGenerator)) as IHilbertMapGenerator;
+                            var mapReport = new ReportNetworkMap(hilbertGenerator);
                             mapReport.GenerateReportFile(hcconso, License, "ad_hc_hilbert_map.html");
                         }
                     }
@@ -706,7 +755,7 @@ namespace PingCastle
 
         public bool HealthCheckRulesTask()
         {
-            return StartTask("PingCastle Health Check rules",
+            return RunTask("PingCastle Health Check rules",
                     () =>
                     {
                         var rulesBuilder = new ReportHealthCheckRules();
@@ -718,7 +767,7 @@ namespace PingCastle
 
         public bool RegenerateHtmlTask()
         {
-            return StartTask("Regenerate html report",
+            return RunTask("Regenerate html report",
                     () =>
                     {
                         var fi = new FileInfo(Settings.InputFile);
@@ -760,7 +809,7 @@ namespace PingCastle
 
         public bool ReloadXmlReport()
         {
-            return StartTask("Reload report",
+            return RunTask("Reload report",
                     () =>
                     {
                         string newfile = Settings.InputFile.Replace(".xml", "_reloaded.xml");
@@ -793,7 +842,7 @@ namespace PingCastle
 
         public bool AnalyzeTask()
         {
-            return StartTask("Analyze",
+            return RunTask("Analyze",
                 () =>
                 {
                     var analyze = new PingCastle.Cloud.Analyzer.Analyzer(Settings.AzureCredential);
@@ -815,7 +864,7 @@ namespace PingCastle
 
         public bool UploadAllReportInCurrentDirectory()
         {
-            return StartTask("Upload report",
+            return RunTask("Upload report",
                 () =>
                 {
                     if (String.IsNullOrEmpty(Settings.apiKey) || String.IsNullOrEmpty(Settings.apiEndpoint))
@@ -854,7 +903,7 @@ namespace PingCastle
 
         public bool GenerateDemoReportTask()
         {
-            return StartTask("Generating demo reports",
+            return RunTask("Generating demo reports",
                     () =>
                     {
                         string path = Path.Combine(Settings.InputDirectory, "demo");
@@ -901,12 +950,11 @@ namespace PingCastle
             Version version = Assembly.GetExecutingAssembly().GetName().Version;
             client.Headers.Add(HttpRequestHeader.ContentType, "application/json");
             client.Headers.Add(HttpRequestHeader.UserAgent, "PingCastle " + version.ToString(4));
-            //client.Headers.Add("Authorization", token);
             string token;
             byte[] answer = null;
             try
             {
-                //https://docs.microsoft.com/en-us/dotnet/api/system.net.securityprotocoltype?view=netcore-3.1
+                //https://learn.microsoft.com/en-us/dotnet/api/system.net.securityprotocoltype?view=netcore-3.1
                 // try enable TLS1.1
                 try
                 {
@@ -1083,9 +1131,6 @@ namespace PingCastle
                 // MIT License
                 _apiAgentSettings = JSONParser.FromJson<AgentSettings>(answer);
 
-                // could also use this serializer, but starting .Net 4 only (not .net 3)
-                //var serializer = new System.Web.Script.Serialization.JavaScriptSerializer();
-                //var deserializedResult = serializer.Deserialize<AgentSettings>(answer);
             }
             catch (WebException ex)
             {
@@ -1125,7 +1170,7 @@ namespace PingCastle
 
         void SendViaAPI(IEnumerable<KeyValuePair<string, string>> xmlreports, IEnumerable<KeyValuePair<string, string>> jsonreports)
         {
-            StartTask("Send via API",
+            RunTask("Send via API",
                     () =>
                     {
                         if (!Settings.apiEndpoint.EndsWith("/"))
@@ -1187,7 +1232,7 @@ namespace PingCastle
         bool RetrieveSettingsViaAPI()
         {
             bool ret = true;
-            StartTask("Retrieve Settings via API",
+            RunTask("Retrieve Settings via API",
                     () =>
                     {
                         if (!Settings.apiEndpoint.EndsWith("/"))
@@ -1276,9 +1321,9 @@ This is the PingCastle program sending reports for:
             SendEmail(email, domains, Files);
         }
 
-        void SendEmail(string recipient, string subject, string body, List<Attachment> attachments)
+        private void SendEmail(string recipient, string subject, string body, List<Attachment> attachments)
         {
-            StartTask("Send email",
+            RunTask("Send email",
                     () =>
                     {
                         MailMessage message = new MailMessage();
@@ -1286,29 +1331,72 @@ This is the PingCastle program sending reports for:
                         {
                             message.Attachments.Add(attachment);
                         }
+
                         message.Subject = subject;
                         message.Body = body;
                         message.To.Add(recipient);
-                        if (!String.IsNullOrEmpty(Settings.mailNotification))
+                        if (!string.IsNullOrEmpty(Settings.mailNotification))
                         {
                             message.Headers.Add("Disposition-Notification-To", Settings.mailNotification);
                             message.Headers.Add("Return-Receipt-To", Settings.mailNotification);
                         }
+
                         SmtpClient client = new SmtpClient();
+                        if (_smtpOptions?.Value != null)
+                        {
+                            // Cannot proceed without host configured.
+                            if (_smtpOptions.Value.Host.IsNullOrEmpty())
+                            {
+                                throw new PingCastleException("SMTP host is not configured. Please verify your email settings.");
+                            }
+
+                            client.Host = _smtpOptions.Value.Host;
+
+                            // Default port to 587 if not specified - this is a common port for SMTP servers to use (RFC 6409).
+                            // This will also enable SSL as the code below checks port 587 to enable SSL if not explicitly set.
+                            client.Port = _smtpOptions.Value.Port > 0 ? _smtpOptions.Value.Port : 587;
+
+                            if (!string.IsNullOrEmpty(_smtpOptions.Value.From))
+                            {
+                                message.From = new MailAddress(_smtpOptions.Value.From);
+                            }
+
+                            if (!string.IsNullOrEmpty(_smtpOptions.Value.DeliveryMethod))
+                            {
+                                if (Enum.TryParse<SmtpDeliveryMethod>(_smtpOptions.Value.DeliveryMethod, true, out var deliveryMethod))
+                                {
+                                    client.DeliveryMethod = deliveryMethod;
+                                }
+                                else
+                                {
+                                    client.DeliveryMethod = SmtpDeliveryMethod.Network;
+                                }
+                            }
+                        }
+
                         if (Settings.smtpTls)
+                        {
                             client.EnableSsl = true;
+                        }
                         else
-                            client.EnableSsl = (client.Port == 587 || client.Port == 465);
-                        if (!String.IsNullOrEmpty(Settings.smtpLogin) || !String.IsNullOrEmpty(Settings.smtpPassword))
-                            client.Credentials = new NetworkCredential(Settings.smtpLogin, Settings.smtpPassword);
+                        {
+                            client.EnableSsl = client.Port == 587 || client.Port == 465;
+                        }
+
+                        string userName = Settings.smtpLogin ?? _smtpOptions?.Value?.UserName;
+                        string password = Settings.smtpPassword ?? _smtpOptions?.Value?.Password;
+                        if (!string.IsNullOrEmpty(userName) && !string.IsNullOrEmpty(password))
+                        {
+                            client.Credentials = new NetworkCredential(userName, password);
+                        }
+
                         client.Send(message);
-                    }
-                    );
+                    });
         }
 
         void UploadToWebsite(string filename, string filecontent)
         {
-            StartTask("Upload to website",
+            RunTask("Upload to website",
                     () =>
                     {
                         WebClient client = new WebClient();
@@ -1325,10 +1413,10 @@ This is the PingCastle program sending reports for:
 
         public bool BotTask()
         {
-            return StartTask("Running Bot",
+            return RunTask("Running Bot",
                     () =>
                     {
-                        var bot = new PingCastle.Bot.Bot();
+                        var bot = new PingCastle.Bot.Bot(_nativeMethods, _identityProvider, _smb2Test);
                         bot.Run(Settings.botPipe);
                     }
             );
@@ -1336,7 +1424,7 @@ This is the PingCastle program sending reports for:
 
         public bool ExportTask()
         {
-            return StartTask("Running Export",
+            return RunTask("Running Export",
                     () =>
                     {
 
@@ -1345,6 +1433,13 @@ This is the PingCastle program sending reports for:
                             DisplayAdvancement("No export selected");
                             return;
                         }
+
+                        if (!License.IsAllowedDomain(Settings.Server))
+                        {
+                            Ui.DisplayWarning("Domain [" + Settings.Server + "] not allowed due to license domain limitations.");
+                            Program.ExitCodes.DomainNotAllowed.Exit();
+                        }
+
                         PropertyInfo pi = Settings.Export.GetProperty("Name");
                         IExport export = PingCastleFactory.LoadExport(Settings.Export);
                         string name = pi.GetValue(export, null) as string;
@@ -1359,124 +1454,125 @@ This is the PingCastle program sending reports for:
             );
         }
 
-        // function used to encapsulate a task and to fail gracefully with an error message
-        // return true is success; false in cas of failure
         delegate void TaskDelegate();
-        private bool StartTask(string taskname, TaskDelegate taskdelegate)
+        private bool RunTask(string taskName, TaskDelegate taskDelegate)
         {
-            Ui.DisplayHighlight("Starting the task: " + taskname);
-            Trace.WriteLine("Starting " + taskname + " at:" + DateTime.Now);
+            Ui.DisplayHighlight("Starting the task: " + taskName);
+            Trace.WriteLine("Starting " + taskName + " at:" + DateTime.Now);
+            bool taskSucceeded = false;
             Stopwatch watch = new Stopwatch();
             watch.Start();
             try
             {
-                taskdelegate();
+                taskDelegate();
+                taskSucceeded = true;
             }
             catch (PingCastleException ex)
             {
-                WriteInRed("[" + DateTime.Now.ToLongTimeString() + "] An exception occured when doing the task: " + taskname);
+                WriteInRed("[" + TimeStampProvider.LongFormatTimestamp() + "] Could not complete " + taskName + ".");
                 WriteInRed(ex.Message);
                 if (ex.InnerException != null)
                 {
                     Trace.WriteLine(ex.InnerException.Message);
                 }
             }
-            // better exception message
             catch (PingCastleDataException ex)
             {
-                WriteInRed("[" + DateTime.Now.ToLongTimeString() + "] An exception occured when doing the task: " + taskname);
-                WriteInRed(ex.ReportName + "-" + ex.Message);
+                WriteInRed("[" + TimeStampProvider.LongFormatTimestamp() + "] Could not complete " + taskName + ".");
+                WriteInRed(ex.ReportName + " - " + ex.Message);
             }
             catch (UnauthorizedAccessException ex)
             {
-                WriteInRed("[" + DateTime.Now.ToLongTimeString() + "] An exception occured when doing the task: " + taskname);
-                WriteInRed("Exception: " + ex.Message);
+                WriteInRed("[" + TimeStampProvider.LongFormatTimestamp() + "] Could not complete " + taskName + ".");
+                WriteInRed("Access denied: " + ex.Message);
                 Trace.WriteLine(ex.StackTrace);
             }
             catch (SmtpException ex)
             {
-                WriteInRed("[" + DateTime.Now.ToLongTimeString() + "] An exception occured when doing the task: " + taskname);
-                WriteInRed("Exception: " + ex.Message);
+                WriteInRed("[" + TimeStampProvider.LongFormatTimestamp() + "] Could not send email.");
+                WriteInRed(ex.Message);
                 WriteInRed("Error code: " + ex.StatusCode);
-                Trace.WriteLine("Type:" + ex.GetType().ToString());
+                Trace.WriteLine("Type:" + ex.GetType().FullName);
                 if (ex.InnerException != null)
                 {
                     WriteInRed(ex.InnerException.Message);
                 }
-                WriteInRed("Check the email configuration in the .config file or the network connectivity to solve the problem");
+
+                WriteInRed("Please verify your email configuration settings and network connectivity.");
             }
             catch (ReflectionTypeLoadException ex)
             {
-                WriteInRed("[" + DateTime.Now.ToLongTimeString() + "] An exception occured when doing the task: " + taskname);
-                WriteInRed("Exception: " + ex.Message);
+                WriteInRed("[" + TimeStampProvider.LongFormatTimestamp() + "] Could not load required components.");
+                WriteInRed(ex.Message);
                 foreach (Type type in new List<Type>(ex.Types))
                 {
-                    WriteInRed("Was trying to load type: " + type.FullName);
+                    WriteInRed("Missing: " + type.FullName);
                 }
-                DisplayException(taskname, ex);
-                return false;
-            }
-            catch(CryptographicException cex)
-            {
-                WriteInRed("[" + DateTime.Now.ToLongTimeString() + "] An cryptographic error occured when doing the task: " + taskname);
 
-                // The only discriminator we have to work with is the message
+                DisplayException(taskName, ex);
+            }
+            catch (CryptographicException cex)
+            {
+                WriteInRed("[" + TimeStampProvider.LongFormatTimestamp() + "] Could not authenticate using the provided certificate.");
                 string errorMessage = cex.Message.Trim('\n', '\r') switch
                 {
-                    "Invalid algorithm specified." => "An Invalid algorithm was specified. This usually means that the certificate used to authenticate does not contain the providers \"Microsoft Enhanced RSA and AES Cryptographic Provider\"",
+                    "Invalid algorithm specified." => "The certificate is missing required security providers. Please verify the certificate configuration.",
                     _ => cex.Message
                 };
-
                 WriteInRed(errorMessage);
-                return false;
             }
-            // default exception message
+            catch (System.ServiceModel.EndpointNotFoundException ex)
+            {
+                WriteInRed("[" + TimeStampProvider.LongFormatTimestamp() + "] Could not connect to the service.");
+                WriteInRed(ex.Message);
+            }
+            catch (System.DirectoryServices.DirectoryServicesCOMException ex)
+            {
+                WriteInRed("[" + TimeStampProvider.LongFormatTimestamp() + "] Could not query Active Directory.");
+                WriteInRed(ex.Message + " (" + ex.ExtendedErrorMessage + ")");
+                if (ex.ExtendedError == 234)
+                {
+                    WriteInRed("The Active Directory server is currently under heavy load. Please try again in a few moments or check the server if the problem persists.");
+                }
+            }
+            catch (System.Runtime.InteropServices.COMException ex)
+            {
+                WriteInRed("[" + TimeStampProvider.LongFormatTimestamp() + "] Could not complete " + taskName + ".");
+                WriteInRed(ex.Message);
+                WriteInRed("Error code: " + ex.HResult);
+            }
+            catch (System.DirectoryServices.ActiveDirectory.ActiveDirectoryServerDownException ex)
+            {
+                WriteInRed("[" + TimeStampProvider.LongFormatTimestamp() + "] Could not reach the Active Directory server.");
+                WriteInRed(ex.Message);
+            }
+            catch (System.DirectoryServices.ActiveDirectory.ActiveDirectoryObjectNotFoundException ex)
+            {
+                WriteInRed("[" + TimeStampProvider.LongFormatTimestamp() + "] Could not find the requested object in Active Directory.");
+                WriteInRed(ex.Message);
+            }
+            catch (System.DirectoryServices.Protocols.LdapException ex)
+            {
+                WriteInRed("[" + TimeStampProvider.LongFormatTimestamp() + "] Could not query Active Directory.");
+                HandleLdapException(ex);
+            }
             catch (Exception ex)
             {
-                WriteInRed("[" + DateTime.Now.ToLongTimeString() + "] An exception occured when doing the task: " + taskname);
-                // type EndpointNotFoundException is located in Service Model using dotnet 3.0. What if run on dotnet 2.0 ?
-                if (ex.GetType().FullName == "System.ServiceModel.EndpointNotFoundException")
+                WriteInRed("[" + TimeStampProvider.LongFormatTimestamp() + "] Could not complete " + taskName + ".");
+                DisplayException(taskName, ex);
+            }
+            finally
+            {
+                watch.Stop();
+                Trace.WriteLine("Stopping " + taskName + " at: " + DateTime.Now);
+                Trace.WriteLine("The task " + taskName + " took " + watch.Elapsed);
+                if (taskSucceeded)
                 {
-                    WriteInRed("Exception: " + ex.Message);
-                }
-                else if (ex.GetType().FullName == "System.Runtime.InteropServices.COMException")
-                {
-                    WriteInRed("Exception: " + ex.Message);
-                    WriteInRed("HRESULT: " + ex.HResult);
-                }
-                // type DirectoryServicesCOMException not found in dotnet core
-                else if (ex.GetType().FullName == "System.DirectoryServices.DirectoryServicesCOMException")
-                {
-                    WriteInRed("An exception occured while querying the Active Directory");
-                    string ExtendedErrorMessage = (string)ex.GetType().GetProperty("ExtendedErrorMessage").GetValue(ex, null);
-                    int ExtendedError = (int)ex.GetType().GetProperty("ExtendedError").GetValue(ex, null);
-                    WriteInRed("Exception: " + ex.Message + "(" + ExtendedErrorMessage + ")");
-                    if (ExtendedError == 234)
-                    {
-                        WriteInRed("This error occurs when the Active Directory server is under load");
-                        WriteInRed("Suggestion: try again and if the error persists, check for AD corruption");
-                        WriteInRed("Try our corruption scanner to identify the object or check for AD integrity using ntdsutil.exe");
-                    }
-                }
-                else if (ex.GetType().FullName == "System.DirectoryServices.ActiveDirectory.ActiveDirectoryServerDownException")
-                {
-                    WriteInRed("Active Directory not Found: " + ex.Message);
-                }
-                else if (ex.GetType().FullName == "System.DirectoryServices.ActiveDirectory.ActiveDirectoryObjectNotFoundException")
-                {
-                    WriteInRed("Active Directory Not Found: " + ex.Message);
-                }
-                else
-                {
-                    DisplayException(taskname, ex);
-                    return false;
+                    Ui.DisplayHighlight("Task " + taskName + " completed");
                 }
             }
-            watch.Stop();
-            Trace.WriteLine("Stoping " + taskname + " at: " + DateTime.Now);
-            Trace.WriteLine("The task " + taskname + " took " + watch.Elapsed);
-            Ui.DisplayHighlight("Task " + taskname + " completed");
-            return true;
+
+            return taskSucceeded;
         }
 
         public static void DisplayException(string taskName, Exception ex, bool showStackTrace = false)
@@ -1501,13 +1597,19 @@ This is the PingCastle program sending reports for:
                 {
                     WriteInDarkRed(ex.StackTrace);
                 }
+
+                if (ex is ConfigurationErrorsException configEx && !(ex.InnerException is ConfigurationErrorsException))
+                {
+                    HandleConfigurationErrorsException(configEx);
+                }
+
                 if (ex.InnerException != null)
                 {
                     Trace.WriteLine("innerexception: ");
                     DisplayException(null, ex.InnerException);
                 }
             }
-            catch(Exception exc)
+            catch (Exception exc)
             {
                 // Basic handling in case we have an error in error handling.
                 WriteInRed("Exception: " + exc.Message);
@@ -1518,6 +1620,56 @@ This is the PingCastle program sending reports for:
         {
             WriteInRed("message: " + (ex.ServerErrorMessage ?? "Could not retrieve error message"));
             WriteInRed("ResultCode: " + ex.ErrorCode);
+        }
+
+        private static void HandleConfigurationErrorsException(ConfigurationErrorsException configEx)
+        {
+            // Assume configEx is already the innermost exception with a filename
+            if (string.IsNullOrEmpty(configEx.Filename) || !File.Exists(configEx.Filename))
+            {
+                WriteInRed("Could not determine the duplicated section. Config file not found.");
+                return;
+            }
+
+            List<string> duplicates = new List<string>();
+            try
+            {
+                var xml = new XmlDocument();
+                xml.Load(configEx.Filename);
+
+                // Count direct children of <configuration>
+                var root = xml.DocumentElement;
+                if (root != null)
+                {
+                    var sectionCounts = root.ChildNodes
+                        .OfType<XmlNode>()
+                        .Where(n => n.NodeType == XmlNodeType.Element)
+                        .GroupBy(n => n.Name)
+                        .Where(g => g.Count() > 1)
+                        .Select(g => g.Key)
+                        .ToList();
+
+                    duplicates.AddRange(sectionCounts);
+                }
+            }
+            catch (Exception ex)
+            {
+                WriteInRed($"Could not parse config file: {ex.Message}");
+                return;
+            }
+
+            if (duplicates.Count > 0)
+            {
+                WriteInRed("Duplicated config section instances detected:");
+                foreach (var section in duplicates)
+                {
+                    WriteInRed($"- {section}");
+                }
+            }
+            else
+            {
+                WriteInRed("Could not determine the duplicated section. Please check your config file for repeated section entries.");
+            }
         }
 
         private static void WriteInRed(string data)

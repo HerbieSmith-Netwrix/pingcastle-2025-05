@@ -10,8 +10,17 @@ using System.Security.Principal;
 
 namespace PingCastle.Scanners
 {
+    using ADWS;
+
     public class localAdminsScanner : ScannerBase
     {
+        private readonly IWindowsNativeMethods _nativeMethods;
+
+        public localAdminsScanner(IWindowsNativeMethods nativeMethods, IIdentityProvider identityProvider)
+        :base(identityProvider)
+        {
+            _nativeMethods = nativeMethods;
+        }
 
         public override string Name { get { return "localadmin"; } }
         public override string Description { get { return "Enumerate the local administrators of a computer."; } }
@@ -36,10 +45,10 @@ namespace PingCastle.Scanners
             return output;
         }
 
-        static string ConvertSIDToName(string sidstring, string server)
+        private string ConvertSIDToName(string sidstring, string server)
         {
             string referencedDomain = null;
-            return NativeMethods.ConvertSIDToNameWithWindowsAPI(sidstring, server, out referencedDomain);
+            return _nativeMethods.ConvertSIDToName(sidstring, server, out referencedDomain);
         }
     }
 }

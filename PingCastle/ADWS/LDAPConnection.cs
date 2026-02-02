@@ -21,8 +21,13 @@ namespace PingCastle.ADWS
 {
     public class LDAPConnection : ADConnection
     {
-        public LDAPConnection(string server, int port, NetworkCredential credential)
+        private readonly IWindowsNativeMethods _nativeMethods;
+
+        public LDAPConnection(string server, int port, NetworkCredential credential, IWindowsNativeMethods nativeMethods,
+            IIdentityProvider identityProvider)
+             : base(identityProvider)
         {
+            _nativeMethods = nativeMethods;
             Server = server;
             Port = port;
             Credential = credential;
@@ -301,9 +306,9 @@ namespace PingCastle.ADWS
             }
         }
      
-        public override System.Security.Principal.SecurityIdentifier ConvertNameToSID(string nameToResolve)
+        public override SecurityIdentifier ConvertNameToSID(string nameToResolve)
         {
-            return NativeMethods.GetSidFromDomainNameWithWindowsAPI(Server, nameToResolve);
+            return _nativeMethods.GetSidFromDomainName(Server, nameToResolve);
         }
 
         IFileConnection fileConnection = null;

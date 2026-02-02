@@ -19,6 +19,7 @@ namespace PingCastle.Scanners
 {
     public class ForeignUsersScanner : IScanner
     {
+        private readonly IWindowsNativeMethods _nativeMethods;
 
         public string Name { get { return "foreignusers"; } }
         public string Description { get { return "Use trusts to enumerate users located in domain denied such as bastion or domains too far away."; } }
@@ -28,6 +29,11 @@ namespace PingCastle.Scanners
         RuntimeSettings Settings;
 
         private readonly IUserInterface _ui = UserInterfaceFactory.GetUserInterface();
+
+        public ForeignUsersScanner(IWindowsNativeMethods nativeMethods)
+        {
+            _nativeMethods = nativeMethods;
+        }
 
         public void Initialize(RuntimeSettings settings)
         {
@@ -78,15 +84,17 @@ Example of FQDN: bastion.local";
             }
             else
             {
-                EnumInboundTrustSid = NativeMethods.GetSidFromDomainNameWithWindowsAPI(Settings.Server, EnumInboundSid);
+                EnumInboundTrustSid = _nativeMethods.GetSidFromDomainName(Settings.Server, EnumInboundSid);
             }
+
             if (EnumInboundTrustSid == null)
             {
                 throw new PingCastleException("The domain " + EnumInboundSid + " couldn't be translated to a sid");
             }
+
             filename = AddSuffix(filename, "_" + EnumInboundSid);
 
-            filename = FilesValidator.CheckPathTraversalAbsolute(filename);
+            filename = FilesValidator.CheckPathTraversal(filename);
 
             using (sw = File.CreateText(filename))
             {

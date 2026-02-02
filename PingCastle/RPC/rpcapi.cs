@@ -1,4 +1,4 @@
-﻿//
+//
 // Copyright (c) Ping Castle. All rights reserved.
 // https://www.pingcastle.com
 //
@@ -120,7 +120,7 @@ namespace PingCastle.RPC
             public IntPtr /*XMIT_ROUTINE_QUINTUPLE*/ aXmitQuintuple;
             public IntPtr pFormatTypes;
             public int fCheckBounds;
-            /* Ndr library version. */
+            // Ndr library version.
             public uint Version;
             public IntPtr /*MALLOC_FREE_STRUCT*/ pMallocFreeStruct;
             public int MIDLVersion;
@@ -209,7 +209,6 @@ namespace PingCastle.RPC
         protected static IntPtr AllocateMemory(int size)
         {
             IntPtr memory = Marshal.AllocHGlobal(size);
-            //Trace.WriteLine("allocating " + memory.ToString());
             return memory;
         }
 
@@ -217,7 +216,6 @@ namespace PingCastle.RPC
         [SecurityPermission(SecurityAction.LinkDemand, Flags = SecurityPermissionFlag.UnmanagedCode)]
         protected static void FreeMemory(IntPtr memory)
         {
-            //Trace.WriteLine("freeing " + memory.ToString());
             Marshal.FreeHGlobal(memory);
         }
 

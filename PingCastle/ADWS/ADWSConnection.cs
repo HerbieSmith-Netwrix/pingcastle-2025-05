@@ -1,9 +1,10 @@
-﻿//
+//
 // Copyright (c) Ping Castle. All rights reserved.
 // https://www.pingcastle.com
 //
 // Licensed under the Non-Profit OSL. See LICENSE file in the project root for full license information.
 //
+using PingCastle.UserInterface;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -13,17 +14,21 @@ using System.Reflection;
 using System.Security.Permissions;
 using System.Security.Principal;
 using System.ServiceModel;
+using System.ServiceModel.Channels;
 using System.Xml;
-using PingCastle.UserInterface;
 
 namespace PingCastle.ADWS
 {
     public class ADWSConnection : ADConnection
 	{
+		private readonly IWindowsNativeMethods _nativeMethods;
 		
-		public ADWSConnection(string server, int port, NetworkCredential credential)
-		{
-			Server = server;
+		public ADWSConnection(string server, int port, NetworkCredential credential, IWindowsNativeMethods nativeMethods,
+			IIdentityProvider identityProvider)
+			: base(identityProvider)
+        {
+            _nativeMethods = nativeMethods;
+            Server = server;
 			Port = port;
 			Credential = credential;
 		}
@@ -51,8 +56,6 @@ namespace PingCastle.ADWS
 					// interval without activity : 10 minutes
 					// max time for enumeration without renew : 30 minutes
 					_binding.MaxReceivedMessageSize = 32000000;
-					//tcpBind.Security.Mode = SecurityMode.Message;
-					_binding.Security.Message.ClientCredentialType = MessageCredentialType.Windows;
 				}
 				return _binding;
 			}
@@ -72,8 +75,8 @@ namespace PingCastle.ADWS
 					uriBuilder.Host = Server;
 					uriBuilder.Port = (Port > 0 ? Port : 9389);
 
-					// setting up the ws-enumeration service (enumerate objects)
-					uriBuilder.Path = "ActiveDirectoryWebServices/Windows/Enumeration";
+                    // setting up the ws-enumeration service (enumerate objects)
+                    uriBuilder.Path = "ActiveDirectoryWebServices/Windows/Enumeration";
 					Trace.WriteLine("Connecting to " + uriBuilder.Uri);
 
 					_search = new SearchClient(Binding, new EndpointAddress(uriBuilder.Uri));
@@ -89,7 +92,7 @@ namespace PingCastle.ADWS
 					SoapHeader[] soapHeaders = new SoapHeader[] {
                            new SoapHeader("instance", "http://schemas.microsoft.com/2008/1/ActiveDirectory", "ldap:389"),
                     };
-					_search.ChannelFactory.Endpoint.Behaviors.Add(new SoapHeaderBehavior(soapHeaders));
+					_search.ChannelFactory.Endpoint.EndpointBehaviors.Add(new SoapHeaderBehavior(soapHeaders));
 				}
 				return _search;
 			}
@@ -109,8 +112,8 @@ namespace PingCastle.ADWS
 					uriBuilder.Host = Server;
 					uriBuilder.Port = (Port > 0 ? Port : 9389);
 
-					// setting up the ws-enumeration service (enumerate objects)
-					uriBuilder.Path = "/ActiveDirectoryWebServices/Windows/Resource";
+                    // setting up the ws-enumeration service (enumerate objects)
+                    uriBuilder.Path = "/ActiveDirectoryWebServices/Windows/Resource";
 					Trace.WriteLine("Connecting to " + uriBuilder.Uri);
 
 					_resource = new ResourceClient(Binding, new EndpointAddress(uriBuilder.Uri));
@@ -127,7 +130,7 @@ namespace PingCastle.ADWS
                            new SoapHeader("instance", "http://schemas.microsoft.com/2008/1/ActiveDirectory", "ldap:389"),
                            new SoapHeader("objectReferenceProperty", "http://schemas.microsoft.com/2008/1/ActiveDirectory", "11111111-1111-1111-1111-111111111111"),
                     };
-					_resource.ChannelFactory.Endpoint.Behaviors.Add(new SoapHeaderBehavior(soapHeaders));
+					_resource.ChannelFactory.Endpoint.EndpointBehaviors.Add(new SoapHeaderBehavior(soapHeaders));
 				}
 				return _resource;
 			}
@@ -147,8 +150,8 @@ namespace PingCastle.ADWS
 					uriBuilder.Host = Server;
 					uriBuilder.Port = (Port > 0 ? Port : 9389);
 
-					// setting up the ws-enumeration service (enumerate objects)
-					uriBuilder.Path = "ActiveDirectoryWebServices/Windows/TopologyManagement";
+                    // setting up the ws-enumeration service (enumerate objects)
+                    uriBuilder.Path = "ActiveDirectoryWebServices/Windows/TopologyManagement";
 					Trace.WriteLine("Connecting to " + uriBuilder.Uri);
 
 					_topology = new TopologyManagementClient(Binding, new EndpointAddress(uriBuilder.Uri));
@@ -217,7 +220,7 @@ namespace PingCastle.ADWS
                     Server = DomainLocator.GetDC(Server, true, true);
 			}
             // if we coulnd't connect to the select DC, even after a refresh, go to exception
-            throw new EndpointNotFoundException();
+            throw new EndpointNotFoundException($"Could not connect to the Domain Controller '{Server}'");
 		}
 
 		public override void Enumerate(string distinguishedName, string filter, string[] properties, WorkOnReturnedObjectByADWS callback, string scope)
@@ -264,8 +267,8 @@ namespace PingCastle.ADWS
 			var output = new XmlQualifiedName[properties.Count];
 			for (int i = 0; i < properties.Count; i++)
 			{
-				if (properties[i] == "distinguishedName")
-					output[i] = new XmlQualifiedName("distinguishedName", "http://schemas.microsoft.com/2008/1/ActiveDirectory");
+				if (properties[i] == "distinguishedname")
+					output[i] = new XmlQualifiedName("distinguishedname", "http://schemas.microsoft.com/2008/1/ActiveDirectory");
 				else
 					output[i] = new XmlQualifiedName(properties[i], "http://schemas.microsoft.com/2008/1/ActiveDirectory/Data");
 			}
@@ -366,9 +369,9 @@ namespace PingCastle.ADWS
 					List<controlsControl> controls = new List<controlsControl>();
 					if (nTSecurityDescriptor)
 					{
-						// this is the flag https://msdn.microsoft.com/en-us/library/cc223323.aspx
-						// the last byte, 0x07, is OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION
-						controlsControl control = new controlsControl();
+                        // this is the flag https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/3888c2b7-35b9-45b7-afeb-b772aa932dd0
+                        // the last byte, 0x07, is OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION
+                        controlsControl control = new controlsControl();
 						controls.Add(control);
 						control.controlValue = Convert.ToBase64String(new byte[] { 0x30, 0x84, 0x00, 0x00, 0x00, 0x03, 0x02, 0x01, 0x07 });
 						control.criticality = true;
@@ -376,9 +379,9 @@ namespace PingCastle.ADWS
 					}
 					if (DomainScope)
 					{
-						// this is the flag https://msdn.microsoft.com/en-us/library/cc223323.aspx
-						// the last byte, 0x07, is OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION
-						controlsControl control = new controlsControl();
+                        // this is the flag https://learn.microsoft.com/en-us/openspecs/windows_protocols/ms-adts/3888c2b7-35b9-45b7-afeb-b772aa932dd0
+                        // the last byte, 0x07, is OWNER_SECURITY_INFORMATION | GROUP_SECURITY_INFORMATION | DACL_SECURITY_INFORMATION
+                        controlsControl control = new controlsControl();
 						controls.Add(control);
 						control.criticality = true;
 						control.type = "1.2.840.113556.1.4.1339";
@@ -396,11 +399,8 @@ namespace PingCastle.ADWS
 					Trace.WriteLine("[" + DateTime.Now.ToLongTimeString() + "]Pull unsuccessful");
 					Trace.WriteLine("Fault Exception: " + ex.Message);
 					Trace.WriteLine("Reason: " + ex.Reason);
-					var stringWriter = new StringWriter();
-					var xmlTextWriter = new XmlTextWriter(stringWriter);
 					var messageFault = ex.CreateMessageFault();
-					messageFault.WriteTo(xmlTextWriter, EnvelopeVersion.Soap12);
-					var stringValue = Convert.ToString(stringWriter);
+					string stringValue = GetMessageFaultAsXmlString(messageFault);
 					Trace.WriteLine("Detail:");
 					Trace.WriteLine(stringValue);
                     var detail = messageFault.GetDetail<schemas.microsoft.com._2008._1.ActiveDirectory.FaultDetail>();
@@ -438,22 +438,51 @@ namespace PingCastle.ADWS
 			Search.Release(relase);
 		}
 
-		protected override ADDomainInfo GetDomainInfoInternal()
+        private string GetMessageFaultAsXmlString(MessageFault messageFault)
+        {
+            using var stringWriter = new StringWriter();
+            using var xmlWriter = XmlWriter.Create(stringWriter);
+
+
+            // Write the start of the SOAP envelope
+            xmlWriter.WriteStartElement("s", "Envelope", "http://www.w3.org/2003/05/soap-envelope");
+            xmlWriter.WriteStartElement("s", "Body", "http://www.w3.org/2003/05/soap-envelope");
+
+            // Write the fault
+            xmlWriter.WriteStartElement("s", "Fault", "http://www.w3.org/2003/05/soap-envelope");
+            xmlWriter.WriteElementString("faultcode", messageFault.Code.Name);
+            xmlWriter.WriteElementString("faultstring", messageFault.Reason.GetMatchingTranslation().Text);
+
+            // Write the fault details
+            if (messageFault.HasDetail)
+            {
+                var detailReader = messageFault.GetReaderAtDetailContents();
+                xmlWriter.WriteStartElement("detail");
+                xmlWriter.WriteNode(detailReader, true);
+                xmlWriter.WriteEndElement();
+            }
+
+            // Close the fault and envelope
+            xmlWriter.WriteEndElement(); // Fault
+            xmlWriter.WriteEndElement(); // Body
+            xmlWriter.WriteEndElement(); // Envelope
+
+            return stringWriter.ToString();
+        }
+
+        protected override ADDomainInfo GetDomainInfoInternal()
 		{
 			try
 			{
 				var data = Resource.Get();
-				return ADDomainInfo.Create(data);
+				return ADDomainInfo.Create(data.Any);
 			}
 			catch (FaultException ex)
 			{
 				Trace.WriteLine("Fault Exception: " + ex.Message);
 				Trace.WriteLine("Reason: " + ex.Reason);
-				var stringWriter = new StringWriter();
-				var xmlTextWriter = new XmlTextWriter(stringWriter);
 				var messageFault = ex.CreateMessageFault();
-				messageFault.WriteTo(xmlTextWriter, EnvelopeVersion.Soap12);
-				var stringValue = Convert.ToString(stringWriter);
+				var stringValue = GetMessageFaultAsXmlString(messageFault);
 				Trace.WriteLine("Exception:");
 				Trace.WriteLine(stringValue);
 				Trace.WriteLine("The connection didn't work");
@@ -461,9 +490,9 @@ namespace PingCastle.ADWS
 			}
 		}
 		
-        public override System.Security.Principal.SecurityIdentifier ConvertNameToSID(string nameToResolve)
+        public override SecurityIdentifier ConvertNameToSID(string nameToResolve)
         {
-            return NativeMethods.GetSidFromDomainNameWithWindowsAPI(Server, nameToResolve);
+            return _nativeMethods.GetSidFromDomainName(Server, nameToResolve);
         }
 
         IFileConnection fileConnection = null;

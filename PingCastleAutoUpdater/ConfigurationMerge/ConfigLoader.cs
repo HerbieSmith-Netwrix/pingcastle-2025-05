@@ -1,15 +1,17 @@
 namespace PingCastleAutoUpdater.ConfigurationMerge
 {
     using System;
-    using System.Xml.Linq;
+    using System.Xml;
 
     public class ConfigLoader : IConfigLoader
     {
-        public XDocument LoadConfig(string path)
+        public XmlDocument LoadConfig(string path)
         {
             try
             {
-                return XDocument.Load(path);
+                var xmlDoc = new XmlDocument();
+                xmlDoc.Load(path);
+                return xmlDoc;
             }
             catch (Exception ex)
             {
