@@ -85,12 +85,14 @@ In summary: Use it freely for internal purposes; purchase a license if you plan 
 
 PingCastle uses the following open source components:
 
-- [Bootstrap](https://getbootstrap.com/) licensed under the [MIT license](https://tldrlegal.com/license/mit-license)
-- [JQuery](https://jquery.org) licensed under the [MIT license](https://tldrlegal.com/license/mit-license)
-- [vis.js](http://visjs.org/) licensed under the [MIT license](https://tldrlegal.com/license/mit-license)
-- [popper.js](https://popper.js.org/) licensed under the [MIT license](https://tldrlegal.com/license/mit-license)
-- [Bootstrap Table](https://bootstrap-table.com/) licensed under the [MIT license](https://tldrlegal.com/license/mit-license)
-- [FodyWeavers](https://github.com/Fody/Fody) licensed under the [MIT license](https://tldrlegal.com/license/mit-license)
+* [Bootstrap](https://getbootstrap.com/) licensed under the [MIT license](https://tldrlegal.com/license/mit-license)
+* [JQuery](https://jquery.org) licensed under the [MIT license](https://tldrlegal.com/license/mit-license)
+* [vis.js](http://visjs.org/) licensed under the [MIT license](https://tldrlegal.com/license/mit-license)
+* [popper.js](https://popper.js.org/) licensed under the [MIT license](https://tldrlegal.com/license/mit-license)
+* [Bootstrap Table](https://bootstrap-table.com/) licensed under the [MIT license](https://tldrlegal.com/license/mit-license)
+* [Bootstrap Table Export](https://bootstrap-table.com) Licensed under the [MIT license](https://tldrlegal.com/license/mit-license)
+* [Table Export](https://github.com/hhurz/tableExport.jquery.plugin) Licensed under the [MIT license](https://tldrlegal.com/license/mit-license)
+* [Font Awesome](https://fontawesome.com) Licensed under the [MIT license](https://tldrlegal.com/license/mit-license)
 
 ## Author
 
