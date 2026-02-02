@@ -136,17 +136,11 @@ Use cases:
 **Example:** With `--wait-for-days 30`, the tool will skip any release published in the last 30 days, even if it's the "latest" release on GitHub.
 
 ### `--api-url <url>`
-Use a custom API endpoint to check for updates instead of the default GitHub API.
+Direct the PingCastle AutoUpdater to use PingCastle Pro or Enterprise to perform updates internally for systems that cannot connect to GitHub.
 
 ```bash
-PingCastleAutoUpdater.exe --api-url https://internal-repo.company.com/releases
+.\PingCastleAutoUpdater.exe --api-url https://pingcastle.your.server/api/release
 ```
-
-This allows you to:
-- Use an internal mirror of PingCastle releases
-- Point to a custom release repository
-- Work in restricted network environments
-
 **Note:** The URL must be HTTP or HTTPS. The API should return release information in the same format as GitHub's API.
 
 ## Common Scenarios
