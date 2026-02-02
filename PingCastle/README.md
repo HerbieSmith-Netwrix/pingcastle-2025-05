@@ -51,7 +51,8 @@ Do not forget that there are other command line switches like --help that you ca
   7-advanced   -Open the advanced menu
   0-Exit
 ==============================
-This is the main functionality of PingCastle. In a matter of minutes, it produces a report which will give you an overview of your Active Directory security. This report can be generated on other domains by using the existing trust links.```
+This is the main functionality of PingCastle. In a matter of minutes, it produces a report which will give you an overview of your Active Directory security. This report can be generated on other domains by using the existing trust links.
+```
 
 Check <https://www.pingcastle.com> for the documentation and methodology
 
