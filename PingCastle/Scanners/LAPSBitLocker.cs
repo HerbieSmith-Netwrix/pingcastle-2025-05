@@ -1,4 +1,4 @@
-﻿using PingCastle.ADWS;
+using PingCastle.ADWS;
 using PingCastle.UserInterface;
 using System;
 using System.Collections.Generic;
@@ -10,12 +10,21 @@ namespace PingCastle.Scanners
 {
     public class LAPSBitLocker : IScanner
     {
+        private readonly IIdentityProvider _identityProvider;
+        private readonly IWindowsNativeMethods _nativeMethods;
+
         public string Name { get { return "laps_bitlocker"; } }
         public string Description { get { return "Check on the AD if LAPS and/or BitLocker has been enabled for all computers on the domain."; } }
 
         RuntimeSettings Settings;
 
         private readonly IUserInterface _ui = UserInterfaceFactory.GetUserInterface();
+
+        public LAPSBitLocker(IIdentityProvider identityProvider, IWindowsNativeMethods nativeMethods)
+        {
+            _identityProvider = identityProvider;
+            _nativeMethods = nativeMethods;
+        }
 
         public void Initialize(RuntimeSettings settings)
         {
@@ -41,7 +50,7 @@ namespace PingCastle.Scanners
         {
             ADDomainInfo domainInfo = null;
 
-            using (ADWebService adws = new ADWebService(Settings.Server, Settings.Port, Settings.Credential))
+            using (ADWebService adws = new ADWebService(Settings.Server, Settings.Port, Settings.Credential, _identityProvider, _nativeMethods))
             {
                 domainInfo = adws.DomainInfo;
 
@@ -110,7 +119,6 @@ namespace PingCastle.Scanners
                             var date = DateTime.Parse(m.Groups[1].ToString().Replace("\\+", "+"));
                             if (computer.BitLockerLastChange < date)
                                 computer.BitLockerLastChange = date;
-                            //string guid = m.Groups[2].ToString();
                         }
                         else
                         {

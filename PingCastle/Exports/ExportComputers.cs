@@ -10,6 +10,14 @@ namespace PingCastle.Exports
 {
     public class ExportComputers : ExportBase
     {
+        private readonly IIdentityProvider _identityProvider;
+        private readonly IWindowsNativeMethods _nativeMethods;
+
+        public ExportComputers(IIdentityProvider identityProvider, IWindowsNativeMethods nativeMethods)
+        {
+            _identityProvider = identityProvider;
+            _nativeMethods = nativeMethods;
+        }
 
         public override string Name
         {
@@ -25,7 +33,7 @@ namespace PingCastle.Exports
         public override void Export(string filename)
         {
             ADDomainInfo domainInfo = null;
-            using (ADWebService adws = new ADWebService(Settings.Server, Settings.Port, Settings.Credential))
+            using (ADWebService adws = new ADWebService(Settings.Server, Settings.Port, Settings.Credential, _identityProvider, _nativeMethods))
             {
                 domainInfo = adws.DomainInfo;
 
@@ -52,7 +60,7 @@ namespace PingCastle.Exports
                     header.Add("PC OS 2");
                     header.Add("IsCluster");
                     header.Add("LAPS last update (legacy LAPS)");
-                    header.Add("LAPS last update (Ms LAPS)");
+                    header.Add("LAPS last update (Windows LAPS)");
 
                     sw.WriteLine(string.Join("\t", header.ToArray()));
 
@@ -104,7 +112,7 @@ namespace PingCastle.Exports
                             data.Add(x.OperatingSystemVersion);
                             if (!string.IsNullOrEmpty(x.OperatingSystem) && !string.IsNullOrEmpty(x.OperatingSystemVersion))
                             {
-                                data.Add(HealthcheckAnalyzer.GetOperatingSystem(x.OperatingSystem));
+                                data.Add(OperatingSystemHelper.GetOperatingSystem(x.OperatingSystem));
                                 if (x.OperatingSystem.Contains("Windows"))
                                 {
                                     var osv = new HealthcheckOSVersionData(x);

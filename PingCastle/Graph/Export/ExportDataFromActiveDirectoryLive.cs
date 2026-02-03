@@ -4,17 +4,17 @@
 //
 // Licensed under the Non-Profit OSL. See LICENSE file in the project root for full license information.
 //
-using PingCastle.ADWS;
-using PingCastle.Data;
-using PingCastle.Graph.Database;
-using PingCastle.Graph.Reporting;
-using PingCastle.misc;
-using PingCastle.UserInterface;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.Net;
 using System.Threading;
+using PingCastle.ADWS;
+using PingCastle.Data;
+using PingCastle.Graph.Database;
+using PingCastle.Graph.Reporting;
+using PingCastle.UserInterface;
+using PingCastle.Utility;
 
 namespace PingCastle.Graph.Export
 {
@@ -23,7 +23,7 @@ namespace PingCastle.Graph.Export
         List<string> properties = new List<string> {
                         "adminCount",
                         "displayName",
-                        "distinguishedName",
+                        "distinguishedname",
                         "dnsHostName",
                         "gPLink",
                         "gPCFileSysPath",
@@ -42,6 +42,7 @@ namespace PingCastle.Graph.Export
                         "sIDHistory",
                         "userAccountControl",
                         "whencreated",
+                        "msDS-AllowedToActOnBehalfOfOtherIdentity"
             };
 
         public IDataStorage Storage { get; set; }
@@ -172,7 +173,7 @@ namespace PingCastle.Graph.Export
                             if (!map[spn[1]].Contains(sid))
                                 map[spn[1]].Add(sid);
                         }
-                        if ((aditem.UserAccountControl & 0x1000000) != 0)
+                        if (aditem.IsPasswordExpired())
                         {
                             protocolTransitionSid.Add(aditem.ObjectSid.Value);
                         }
@@ -180,8 +181,8 @@ namespace PingCastle.Graph.Export
             adws.Enumerate(domainInfo.DefaultNamingContext,
                                                 "(&(msDS-AllowedToDelegateTo=*)((userAccountControl:1.2.840.113556.1.4.804:=16777216)))",
                                                 new string[] { "objectSid", "msDS-AllowedToDelegateTo", "userAccountControl" }, callback);
-            RelationFactory.InitializeDelegation(map, protocolTransitionSid);
-        }
+                    RelationFactory.InitializeDelegation(map, protocolTransitionSid);
+                    }
 
         private void ExportReportData(GraphObjectReference objectReference, List<string> UsersToInvestigate)
         {
@@ -390,7 +391,7 @@ namespace PingCastle.Graph.Export
                     searchString = "(|(objectSid=" + ADConnection.EncodeSidToString(userName) + ")(sidhistory=" + ADConnection.EncodeSidToString(userName) + "))";
                     break;
                 case SearchType.DistinguishedName:
-                    searchString = "(distinguishedName=" + ADConnection.EscapeLDAP(userName) + ")";
+                    searchString = "(distinguishedname=" + ADConnection.EscapeLDAP(userName) + ")";
                     if (userName.EndsWith(domainInfo.ConfigurationNamingContext, StringComparison.InvariantCultureIgnoreCase))
                     {
                         namingContext = domainInfo.ConfigurationNamingContext;

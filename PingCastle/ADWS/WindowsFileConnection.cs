@@ -1,136 +1,104 @@
-﻿using System;
+#nullable enable
+using System;
 using System.Collections.Generic;
-using System.ComponentModel;
-using System.Diagnostics;
 using System.IO;
 using System.Net;
-using System.Runtime.InteropServices;
 using System.Security.AccessControl;
 using System.Security.Principal;
 
 namespace PingCastle.ADWS
 {
-    public interface IFileConnection : IDisposable
-    {
-        bool IsDirectory(string path);
-        DirectorySecurity GetDirectorySecurity(string path);
-        FileSecurity GetFileSecurity(string path);
-        IEnumerable<string> GetSubDirectories(string path);
-        bool FileExists(string path);
-        bool DirectoryExists(string path);
-        //StreamReader ReadFile(string path);
-        string GetShortName(string path);
-        Stream GetFileStream(string path);
-        DateTime GetLastWriteTime(string path);
-        string PathCombine(string path1, string path2);
-        List<string> GetAllSubDirectories(string path);
-        List<string> GetAllSubFiles(string path);
-
-        void ThreadInitialization();
-    }
-
     internal class WindowsFileConnection : IFileConnection
     {
+        private readonly WindowsIdentity? _identity;
+
+        public WindowsFileConnection(NetworkCredential? credential, string server)
+        {
+            if (credential != null)
+            {
+                var identityProvider = ServiceProviderAccessor.GetServiceSafe<IIdentityProvider>();
+                if (identityProvider != null)
+                {
+                    _identity = identityProvider.GetWindowsIdentityForUser(credential, server);
+                }
+            }
+        }
+
+        /// <summary>
+        /// Wraps an action with impersonation if credentials were provided, otherwise executes directly.
+        /// </summary>
+        public void RunImpersonatedIfNeeded(Action action)
+        {
+            if (_identity != null)
+            {
+                WindowsIdentity.RunImpersonated(_identity.AccessToken, action);
+            }
+
+            action();
+        }
+
+        /// <summary>
+        /// Wraps a function with impersonation if credentials were provided, otherwise executes directly.
+        /// </summary>
+        public T RunImpersonatedIfNeeded<T>(Func<T> func)
+        {
+            if (_identity != null)
+            {
+                return WindowsIdentity.RunImpersonated(_identity.AccessToken, func);
+            }
+
+            return func();
+        }
 
         public bool IsDirectory(string path)
         {
-            return (File.GetAttributes(path) & FileAttributes.Directory) == FileAttributes.Directory;
+            return RunImpersonatedIfNeeded(() =>
+                (File.GetAttributes(path) & FileAttributes.Directory) == FileAttributes.Directory);
         }
-
 
         public DirectorySecurity GetDirectorySecurity(string path)
         {
-            return Directory.GetAccessControl(path);
+            return RunImpersonatedIfNeeded(() => new DirectoryInfo(path).GetAccessControl());
         }
-
 
         public FileSecurity GetFileSecurity(string path)
         {
-            return File.GetAccessControl(path);
+            return RunImpersonatedIfNeeded(() => new FileInfo(path).GetAccessControl());
         }
-
 
         public IEnumerable<string> GetSubDirectories(string path)
         {
-            DirectoryInfo di = new DirectoryInfo(path);
-            DirectoryInfo[] AllDirectories = di.GetDirectories();
-            var o = new List<string>();
-            foreach(var d in AllDirectories)
+            return RunImpersonatedIfNeeded(() =>
             {
-                o.Add(d.FullName);
-            }
-            return o;
+                DirectoryInfo di = new DirectoryInfo(path);
+                DirectoryInfo[] allDirectories = di.GetDirectories();
+                var o = new List<string>();
+                foreach (var d in allDirectories)
+                {
+                    o.Add(d.FullName);
+                }
+                return o;
+            });
         }
-
 
         public bool FileExists(string path)
         {
-            return File.Exists(path);
+            return RunImpersonatedIfNeeded(() => File.Exists(path));
         }
 
         public bool DirectoryExists(string path)
         {
-            var directory = new DirectoryInfo(path);
-            return directory.Exists;
-        }
-
-        WindowsIdentity identity;
-        WindowsImpersonationContext context;
-
-        public WindowsFileConnection(NetworkCredential credential, string server)
-        {
-            if (credential != null)
-            {
-                identity = GetWindowsIdentityForUser(credential, server);
-                context = identity.Impersonate();
-            }
+            return RunImpersonatedIfNeeded(() => new DirectoryInfo(path).Exists);
         }
 
         private void Unmount()
         {
-            if (context != null)
+            if (_identity != null)
             {
-                context.Undo();
-                context.Dispose();
+                _identity.Dispose();
             }
-            if (identity != null)
-                identity.Dispose();
         }
 
-        [DllImport("advapi32.dll", SetLastError = true, CharSet = CharSet.Unicode)]
-        private static extern bool LogonUser(string lpszUsername, string lpszDomain, string lpszPassword, int dwLogonType, int dwLogonProvider, ref IntPtr phToken);
-
-        [DllImport("kernel32.dll", SetLastError = true)]
-        private static extern bool CloseHandle(IntPtr hObject);
-
-        // logon types
-        const int LOGON32_LOGON_NEW_CREDENTIALS = 9;
-
-        // logon providers
-        const int LOGON32_PROVIDER_DEFAULT = 0;
-
-        public static WindowsIdentity GetWindowsIdentityForUser(NetworkCredential credential, string remoteserver)
-        {
-            IntPtr token = IntPtr.Zero;
-            Trace.WriteLine("Preparing to login with login = " + credential.UserName + " remoteserver = " + remoteserver);
-            var szDomain = credential.Domain;
-            if (string.IsNullOrEmpty(szDomain))
-            {
-                if (!credential.UserName.Contains("@"))
-                {
-                    szDomain = remoteserver;
-                }
-            }
-
-            bool isSuccess = LogonUser(credential.UserName, szDomain, credential.Password, LOGON32_LOGON_NEW_CREDENTIALS, LOGON32_PROVIDER_DEFAULT, ref token);
-            if (!isSuccess)
-            {
-                throw new Win32Exception();
-            }
-            var output = new WindowsIdentity(token);
-            CloseHandle(token);
-            return output;
-        }
 
         #region IDispose
         public void Dispose()
@@ -176,47 +144,53 @@ namespace PingCastle.ADWS
 
         public Stream GetFileStream(string path)
         {
-            return new FileStream(path, FileMode.Open, FileAccess.Read);
+            return RunImpersonatedIfNeeded(() => new FileStream(path, FileMode.Open, FileAccess.Read));
         }
-
 
         public string GetShortName(string path)
         {
             if (string.IsNullOrEmpty(path))
+            {
                 return string.Empty;
-            var p = path.Split('\\');
-            return p[p.Length - 1];
-        }
+            }
 
+            var p = path.Split('\\');
+            return p[^1];
+        }
 
         public DateTime GetLastWriteTime(string path)
         {
-            FileInfo fi = new FileInfo(path);
-            return fi.LastWriteTime;
+            return RunImpersonatedIfNeeded(() =>
+            {
+                FileInfo fi = new FileInfo(path);
+                return fi.LastWriteTime;
+            });
         }
-
 
         public string PathCombine(string path1, string path2)
         {
             return Path.Combine(path1, path2);
         }
 
-
         public List<string> GetAllSubDirectories(string path)
         {
-            return new List<string>(Directory.GetDirectories(path, "*", SearchOption.AllDirectories));
+            return RunImpersonatedIfNeeded(() =>
+                new List<string>(Directory.GetDirectories(path, "*", SearchOption.AllDirectories)));
         }
 
         public List<string> GetAllSubFiles(string path)
         {
-            return new List<string>(Directory.GetFiles(path, "*.*", SearchOption.AllDirectories));
+            return RunImpersonatedIfNeeded(() =>
+                new List<string>(Directory.GetFiles(path, "*.*", SearchOption.AllDirectories)));
         }
-
 
         public void ThreadInitialization()
         {
-            if (identity != null)
-                identity.Impersonate();
+            // Note: In .NET Framework, this maintained impersonation context across threads.
+            // .NET 8 does not support thread-level impersonation (no Impersonate() method).
+            // Impersonation now must be scoped to individual operations via RunImpersonatedIfNeeded().
+
+            // TODO: Remove this method and chase down all calls to ensure impersonation is handled correctly.
         }
     }
 }

@@ -1,4 +1,4 @@
-﻿namespace PingCastle.Cloud.UI
+namespace PingCastle.Cloud.UI
 {
     using System;
     using System.Collections.Generic;
@@ -121,7 +121,7 @@
             var service = AzureServiceAttribute.GetAzureServiceAttribute<T>();
             if (!result.Code.IsNullOrEmpty())
             {
-                var token = TokenFactory.RunGetToken<T>(credential, result.Code, service.RedirectUri, result.CodeVerifier).GetAwaiter().GetResult();
+                var token = new TokenFactory().RunGetToken<T>(credential, result.Code, service.RedirectUri, result.CodeVerifier).GetAwaiter().GetResult();
                 return Token.LoadFromString(token);
             }
 
@@ -148,33 +148,33 @@
         /// <param name="htmlContent">The HTML content to display to the user.</param>
         /// <returns>A new <see cref="Token"/>.</returns>
         /// <exception cref="ApplicationException">Thrown when authentication fails either due to error or no code returned.</exception>
-        public static Token CompleteAuthenticationWithHtml<T>(IAzureCredential credential, string htmlContent)
+        public static Token CompleteAuthenticationWithHtml<T>(IAzureCredential credential, string htmlContent, ITokenFactory tokenFactory)
             where T : IAzureService
         {
             AuthenticationResultSet result = default;
             Thread thread = new Thread(() =>
-            {
-                Trace.WriteLine("Started Thread for HTML authentication");
-                var f = new AuthenticationDialog();
-                f.service = AzureServiceAttribute.GetAzureServiceAttribute<T>();
-                f.codeVerifier = GenerateCodeVerifier();
-
-                Trace.WriteLine("Showing HTML content to user");
-                f.webBrowser.DocumentText = htmlContent;
-                f.ShowDialog();
-
-                result = new AuthenticationResultSet
                 {
-                    Code = f.code,
-                    CodeVerifier = f.codeVerifier,
-                    Error = f.error,
-                    ErrorDescription = f.error_description,
-                };
+                    Trace.WriteLine("Started Thread for HTML authentication");
+                    var f = new AuthenticationDialog();
+                    f.service = AzureServiceAttribute.GetAzureServiceAttribute<T>();
+                    f.codeVerifier = GenerateCodeVerifier();
 
-                Trace.WriteLine("code=" + f.code);
-                Trace.WriteLine("error=" + f.error);
-                Trace.WriteLine("error_description=" + f.error_description);
-            });
+                    Trace.WriteLine("Showing HTML content to user");
+                    f.webBrowser.DocumentText = htmlContent;
+                    f.ShowDialog();
+
+                    result = new AuthenticationResultSet
+                    {
+                        Code = f.code,
+                        CodeVerifier = f.codeVerifier,
+                        Error = f.error,
+                        ErrorDescription = f.error_description,
+                    };
+
+                    Trace.WriteLine("code=" + f.code);
+                    Trace.WriteLine("error=" + f.error);
+                    Trace.WriteLine("error_description=" + f.error_description);
+                });
 
             thread.SetApartmentState(ApartmentState.STA);
             thread.Start();
@@ -196,7 +196,7 @@
             }
 
             var service = AzureServiceAttribute.GetAzureServiceAttribute<T>();
-            var token = TokenFactory.RunGetToken<T>(credential, result.Code, service.RedirectUri, result.CodeVerifier).Result;
+            var token = tokenFactory.RunGetToken<T>(credential, result.Code, service.RedirectUri, result.CodeVerifier).Result;
             return Token.LoadFromString(token);
         }
 
@@ -208,41 +208,41 @@
         /// <param name="authUrl">The authentication URL.</param>
         /// <returns>A new <see cref="Token"/>.</returns>
         /// <exception cref="ApplicationException">Thrown when authentication fails either due to error or no code returned.</exception>
-        public static Token ContinueAuthentication<T>(IAzureCredential credential, string authUrl)
+        public static Token ContinueAuthentication<T>(IAzureCredential credential, string authUrl, ITokenFactory tokenFactory)
             where T : IAzureService
         {
             AuthenticationResultSet result = default;
 
             AuthenticationDialog f = null;
             Thread thread = new Thread(() =>
-            {
-                Trace.WriteLine("Started MFA continuation Thread");
-                f = new AuthenticationDialog();
-
-                f.codeVerifier = GenerateCodeVerifier();
-                f.service = AzureServiceAttribute.GetAzureServiceAttribute<T>();
-
-                // Navigate to the authentication URL instead of setting DocumentText
-                // This preserves cookies and session state
-                Trace.WriteLine("Navigating to auth URL for MFA");
-                f.webBrowser.Navigate(authUrl);
-
-                Trace.WriteLine("Showing MFA dialog");
-                f.ShowDialog();
-
-                result = new AuthenticationResultSet
                 {
-                    Code = f.code,
-                    CodeVerifier = f.codeVerifier,
-                    Error = f.error,
-                    ErrorDescription = f.error_description,
-                };
+                    Trace.WriteLine("Started MFA continuation Thread");
+                    f = new AuthenticationDialog();
 
-                Trace.WriteLine("code=" + result.Code);
-                Trace.WriteLine("error=" + result.Error);
-                Trace.WriteLine("error_description=" + result.ErrorDescription);
-                Trace.WriteLine("code_verifier=" + result.CodeVerifier);
-            });
+                    f.codeVerifier = GenerateCodeVerifier();
+                    f.service = AzureServiceAttribute.GetAzureServiceAttribute<T>();
+
+                    // Navigate to the authentication URL instead of setting DocumentText
+                    // This preserves cookies and session state
+                    Trace.WriteLine("Navigating to auth URL for MFA");
+                    f.webBrowser.Navigate(authUrl);
+
+                    Trace.WriteLine("Showing MFA dialog");
+                    f.ShowDialog();
+
+                    result = new AuthenticationResultSet
+                    {
+                        Code = f.code,
+                        CodeVerifier = f.codeVerifier,
+                        Error = f.error,
+                        ErrorDescription = f.error_description,
+                    };
+
+                    Trace.WriteLine("code=" + result.Code);
+                    Trace.WriteLine("error=" + result.Error);
+                    Trace.WriteLine("error_description=" + result.ErrorDescription);
+                    Trace.WriteLine("code_verifier=" + result.CodeVerifier);
+                });
 
             thread.SetApartmentState(ApartmentState.STA);
             thread.Start();
@@ -258,7 +258,7 @@
                 throw new ApplicationException("No authorization code was obtained.");
             }
 
-            var tokenTask = TokenFactory.RunGetToken<T>(
+            var tokenTask = tokenFactory.RunGetToken<T>(
                 credential,
                 result.Code,
                 f?.service?.RedirectUri,
@@ -279,10 +279,10 @@
 
             service = AzureServiceAttribute.GetAzureServiceAttribute<T>();
 
-            // https://docs.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-auth-code-flow
+            // https://learn.microsoft.com/en-us/azure/active-directory/develop/v2-oauth2-auth-code-flow
             var info = new Dictionary<string, string>
             {
-                    { "resource", service.Resource },
+                    { "scope", "openid profile email offline_access " + service.Resource + "/.default" },
                     { "client_id", service.ClientID.ToString() },
                     { "response_type", "code" },
                     { "redirect_uri", service.RedirectUri },

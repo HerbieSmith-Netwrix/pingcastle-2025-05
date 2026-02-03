@@ -2,8 +2,7 @@
 {
     using System;
     using System.Collections.Generic;
-    using System.Linq;
-    using System.Xml.Linq;
+    using System.Xml;
 
     /// <summary>
     /// Implements deep XML configuration merging, preserving existing values in the target
@@ -11,8 +10,20 @@
     /// </summary>
     public class ConfigMerger : IConfigMerger
     {
-        private int _recursionDepth;
         private const int MaxRecursionDepth = 100;
+        private int _recursionDepth;
+        private List<string> _mergedElements;
+        private List<string> _newElements;
+
+        /// <summary>
+        /// Gets the list of elements that were merged (already existed in target)
+        /// </summary>
+        public IReadOnlyList<string> MergedElements => _mergedElements?.AsReadOnly() ?? new List<string>().AsReadOnly();
+
+        /// <summary>
+        /// Gets the list of elements that were added (new from source)
+        /// </summary>
+        public IReadOnlyList<string> NewElements => _newElements?.AsReadOnly() ?? new List<string>().AsReadOnly();
 
         /// <summary>
         /// Merges source configuration into target configuration, adding missing elements at all nesting levels
@@ -20,13 +31,17 @@
         /// <param name="target">Target configuration document</param>
         /// <param name="source">Source configuration document</param>
         /// <returns>The merged configuration document</returns>
-        public XDocument MergeConfigs(XDocument target, XDocument source)
+        public XmlDocument MergeConfigs(XmlDocument target, XmlDocument source)
         {
             if (target == null) throw new ArgumentNullException(nameof(target));
             if (source == null) throw new ArgumentNullException(nameof(source));
 
-            var targetRoot = target.Root;
-            var sourceRoot = source.Root;
+            // Reset tracking lists
+            _mergedElements = new List<string>();
+            _newElements = new List<string>();
+
+            var targetRoot = target.DocumentElement;
+            var sourceRoot = source.DocumentElement;
 
             if (targetRoot == null || sourceRoot == null)
                 throw new ConfigException("Invalid configuration document structure");
@@ -43,7 +58,7 @@
         /// <summary>
         /// Recursively merges elements from source into target
         /// </summary>
-        private void MergeElements(XElement target, XElement source, HashSet<string> existingComments)
+        private void MergeElements(XmlElement target, XmlElement source, HashSet<string> existingComments)
         {
             _recursionDepth++;
             if (_recursionDepth > MaxRecursionDepth)
@@ -53,24 +68,38 @@
 
             try
             {
-                foreach (var sourceElement in source.Elements())
+                foreach (XmlNode node in source.ChildNodes)
                 {
-                    // Try to find a matching element in the target
-                    var elementName = sourceElement.Name;
+                    if (node.NodeType != XmlNodeType.Element)
+                        continue;
 
-                    var matchingElements = target.Elements(elementName);
+                    var sourceElement = (XmlElement)node;
+                    var elementName = sourceElement.LocalName;
 
                     // Find element with matching attributes
-                    var targetElement = matchingElements.FirstOrDefault(e =>
-                        HasMatchingAttributes(e, sourceElement));
+                    XmlElement targetElement = null;
+                    foreach (XmlNode candidateNode in target.ChildNodes)
+                    {
+                        if (candidateNode.NodeType != XmlNodeType.Element)
+                            continue;
+
+                        var candidate = (XmlElement)candidateNode;
+                        if (candidate.LocalName == elementName && HasMatchingAttributes(candidate, sourceElement))
+                        {
+                            targetElement = candidate;
+                            break;
+                        }
+                    }
 
                     if (targetElement == null)
                     {
                         AddMissingElementWithComments(target, sourceElement, existingComments);
+                        _newElements.Add(elementName);
                     }
                     else
                     {
                         // Element exists, recursively merge its children
+                        _mergedElements.Add(elementName);
                         MergeElements(targetElement, sourceElement, existingComments);
                     }
                 }
@@ -84,16 +113,17 @@
                 }
             }
         }
-        private static bool HasMatchingAttributes(XElement first, XElement second)
+
+        private static bool HasMatchingAttributes(XmlElement first, XmlElement second)
         {
             // If either element has no attributes, only match on name
-            if (!first.HasAttributes && !second.HasAttributes)
+            if (first.Attributes.Count == 0 && second.Attributes.Count == 0)
                 return true;
 
             // Check that all attributes match -  partial matches are not processed.
-            foreach (var attr in first.Attributes())
+            foreach (XmlAttribute attr in first.Attributes)
             {
-                var secondAttr = second.Attribute(attr.Name);
+                var secondAttr = second.GetAttributeNode(attr.Name);
                 if (secondAttr == null || secondAttr.Value != attr.Value)
                     return false;
             }
@@ -101,45 +131,62 @@
             return true;
         }
 
-        private static void AddMissingElementWithComments(XElement target, XElement sourceElement, HashSet<string> existingComments)
+        private static void AddMissingElementWithComments(XmlElement target, XmlElement sourceElement, HashSet<string> existingComments)
         {
             // Add missing comments
             var precedingComments = GetPrecedingComments(sourceElement);
             foreach (var comment in precedingComments)
             {
-                if (!existingComments.Contains(comment.Value))
+                if (!existingComments.Contains(comment))
                 {
-                    target.Add(new XComment(comment.Value));
-                    existingComments.Add(comment.Value);
+                    var commentNode = target.OwnerDocument.CreateComment(comment);
+                    target.AppendChild(commentNode);
+                    existingComments.Add(comment);
                 }
             }
 
-            target.Add(new XElement(sourceElement));
+            // Clone and append the source element
+            var newElement = (XmlElement)target.OwnerDocument.ImportNode(sourceElement, true);
+            target.AppendChild(newElement);
         }
 
         /// <summary>
         /// Collects all comments from the document into a hashset for duplicate checking
         /// </summary>
-        private static HashSet<string> GetAllComments(XDocument document)
+        private static HashSet<string> GetAllComments(XmlDocument document)
         {
-            return new HashSet<string>(
-                document.Descendants()
-                    .SelectMany(e => e.Nodes().OfType<XComment>())
-                    .Select(c => c.Value));
+            var comments = new HashSet<string>();
+            CollectComments(document.DocumentElement, comments);
+            return comments;
+        }
+
+        private static void CollectComments(XmlNode node, HashSet<string> comments)
+        {
+            foreach (XmlNode child in node.ChildNodes)
+            {
+                if (child.NodeType == XmlNodeType.Comment)
+                {
+                    comments.Add(child.Value);
+                }
+                else if (child.NodeType == XmlNodeType.Element)
+                {
+                    CollectComments(child, comments);
+                }
+            }
         }
 
         /// <summary>
         /// Gets all comment nodes that directly precede the specified element
         /// </summary>
-        private static IEnumerable<XComment> GetPrecedingComments(XElement element)
+        private static List<string> GetPrecedingComments(XmlElement element)
         {
-            var comments = new List<XComment>();
-            var previousNode = element.PreviousNode;
+            var comments = new List<string>();
+            var previousNode = element.PreviousSibling;
 
-            while (previousNode != null && previousNode is XComment)
+            while (previousNode != null && previousNode.NodeType == XmlNodeType.Comment)
             {
-                comments.Add((XComment)previousNode);
-                previousNode = previousNode.PreviousNode;
+                comments.Add(previousNode.Value);
+                previousNode = previousNode.PreviousSibling;
             }
 
             // Return comments in the original order

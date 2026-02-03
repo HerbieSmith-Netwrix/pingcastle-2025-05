@@ -54,8 +54,8 @@ namespace PingCastle.Exports
                                 {
                                     string i;
                                     // there is no easy way to know the synthax of the object
-                                    // see https://social.technet.microsoft.com/wiki/contents/articles/52570.active-directory-syntaxes-of-attributes.aspx
-                                    
+                                    // see https://learn.microsoft.com/en-us/archive/technet-wiki/52570.active-directory-syntaxes-of-attributes
+
                                     // so we try each well known type one by one
                                     try
                                     {

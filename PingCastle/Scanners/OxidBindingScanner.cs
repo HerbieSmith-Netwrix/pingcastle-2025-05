@@ -4,6 +4,7 @@
 //
 // Licensed under the Non-Profit OSL. See LICENSE file in the project root for full license information.
 //
+using PingCastle.ADWS;
 using PingCastle.RPC;
 using System;
 using System.Collections.Generic;
@@ -14,6 +15,10 @@ namespace PingCastle.Scanners
 {
     public class OxidBindingScanner : ScannerBase
     {
+        public OxidBindingScanner(IIdentityProvider identityProvider)
+            : base(identityProvider)
+        {
+        }
 
         public override string Name { get { return "oxidbindings"; } }
         public override string Description { get { return "List all IP of the computer via the Oxid Resolver (part of DCOM). No authentication. Used to find other networks such as the one used for administration."; } }

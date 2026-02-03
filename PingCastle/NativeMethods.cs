@@ -14,7 +14,7 @@ using System.Text;
 
 namespace PingCastle
 {
-    public class NativeMethods
+    public class NativeMethods : IWindowsNativeMethods
     {
         #region PInvoke Signatures
 
@@ -46,7 +46,7 @@ namespace PingCastle
         }
 
         [EnvironmentPermissionAttribute(SecurityAction.Demand, Unrestricted = true)]
-        public static string ConvertSIDToNameWithWindowsAPI(string sidstring, string server, out string referencedDomain)
+        public string ConvertSIDToName(string sidstring, string server, out string referencedDomain)
         {
             StringBuilder name = new StringBuilder();
             uint cchName = (uint)name.Capacity;
@@ -248,7 +248,7 @@ namespace PingCastle
         }
 
         [SecurityPermission(SecurityAction.Demand, Flags = SecurityPermissionFlag.UnmanagedCode)]
-        public static SecurityIdentifier GetSidFromDomainNameWithWindowsAPI(string server, string domainToResolve)
+        public SecurityIdentifier GetSidFromDomainName(string server, string domainToResolve)
         {
             NativeMethods.UNICODE_STRING us = new NativeMethods.UNICODE_STRING();
             NativeMethods.LSA_OBJECT_ATTRIBUTES loa = new NativeMethods.LSA_OBJECT_ATTRIBUTES();
@@ -348,7 +348,7 @@ namespace PingCastle
             out IntPtr bufptr);
 
         [SecurityPermission(SecurityAction.Demand, Flags = SecurityPermissionFlag.UnmanagedCode)]
-        public static DateTime GetStartupTime(string server)
+        public DateTime GetStartupTime(string server)
         {
             IntPtr buffer = IntPtr.Zero;
             uint ret = NetStatisticsGet(server, "LanmanWorkstation", 0, 0, out buffer);
@@ -385,7 +385,7 @@ namespace PingCastle
                 out IntPtr bufptr);
 
         [SecurityPermission(SecurityAction.Demand, Flags = SecurityPermissionFlag.UnmanagedCode)]
-        public static string GetComputerVersion(string server)
+        public string GetComputerVersion(string server)
         {
             IntPtr buffer = IntPtr.Zero;
             uint ret = NetWkstaGetInfo(server, 100, out buffer);
@@ -453,6 +453,12 @@ namespace PingCastle
         [DllImport("kernel32.dll")]
         static extern IntPtr LocalFree(IntPtr hMem);
 
+        /// <summary>
+        /// Splitting command line arguments using Windows standard to correctly handle all escaping rules.
+        /// </summary>
+        /// <param name="unsplitArgumentLine">The command line string</param>
+        /// <returns>An array of argument strings that have been split from the command line</returns>
+        /// <exception cref="ArgumentException">Thrown is windows method fails to return arguments.</exception>
         private static string[] SplitArgsWindows(string unsplitArgumentLine)
         {
             int numberOfArgs;
@@ -485,8 +491,10 @@ namespace PingCastle
             }
         }
 
-        public static string[] SplitArguments(string commandLine)
+        public string[] SplitArguments(string commandLine)
         {
+            // TODO: Determine if this is redundant as we would always be running on Windows?
+            //        We might always use the SplitArgsWindows method?
             if (Environment.OSVersion.Platform == PlatformID.Win32NT)
             {
                 return SplitArgsWindows(commandLine);

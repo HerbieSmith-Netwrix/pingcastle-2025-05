@@ -15,9 +15,14 @@ using System.Text;
 
 namespace PingCastle.Scanners
 {
+    using ADWS;
 
     public class RemoteScanner : ScannerBase
     {
+        public RemoteScanner(IIdentityProvider identityProvider) : base(identityProvider)
+        {
+        }
+
         private readonly IUserInterface _ui = UserInterfaceFactory.GetUserInterface();
 
         public override string Name { get { return "remote"; } }

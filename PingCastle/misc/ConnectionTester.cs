@@ -1,10 +1,10 @@
 ﻿using System;
 using System.Diagnostics;
 using System.IO;
+using System.Linq;
 using System.Net;
 using System.Net.Security;
 using System.Net.Sockets;
-using System.Reflection;
 using System.Security.Authentication;
 using System.Security.Authentication.ExtendedProtection;
 using System.Security.Cryptography.X509Certificates;
@@ -26,17 +26,19 @@ namespace PingCastle.misc
         LocalCall
     }
 
-    abstract class ConnectionTester
+    abstract class ConnectionTester : IDisposable
     {
 
         public static ConnectionTesterStatus TestExtendedAuthentication(Uri uri, NetworkCredential credential, string logPrefix)
         {
             try
             {
-                var tester = CreateTester(uri);
-                tester.LogPrefix = logPrefix;
-                tester.Credential = credential;
-                return tester.TestExtendedAuthentication(uri);
+                using (var tester = CreateTester(uri))
+                {
+                    tester.LogPrefix = logPrefix;
+                    tester.Credential = credential;
+                    return tester.TestExtendedAuthentication(uri);
+                }
             }
             catch (LocalCallException)
             {
@@ -54,10 +56,12 @@ namespace PingCastle.misc
         {
             try
             {
-                var tester = CreateTester(uri);
-                tester.LogPrefix = logPrefix;
-                tester.Credential = credential;
-                return tester.TestSignatureRequiredEnabled(uri);
+                using (var tester = CreateTester(uri))
+                {
+                    tester.LogPrefix = logPrefix;
+                    tester.Credential = credential;
+                    return tester.TestSignatureRequiredEnabled(uri);
+                }
             }
             catch (LocalCallException)
             {
@@ -75,10 +79,12 @@ namespace PingCastle.misc
         {
             try
             {
-                var tester = CreateTester(uri);
-                tester.LogPrefix = logPrefix;
-                tester.Credential = credential;
-                return tester.Test(uri, false, true);
+                using (var tester = CreateTester(uri))
+                {
+                    tester.LogPrefix = logPrefix;
+                    tester.Credential = credential;
+                    return tester.Test(uri, false, true);
+                }
             }
             catch (LocalCallException)
             {
@@ -175,10 +181,6 @@ namespace PingCastle.misc
 
         ConnectionTesterStatus Test(Uri uri, bool disableSigning = false, bool enableChannelBinding = false)
         {
-
-            if (!Initialize())
-                return ConnectionTesterStatus.InitializationFailed;
-
             try
             {
                 int port = uri.Port;
@@ -248,70 +250,27 @@ namespace PingCastle.misc
         }
 
         protected string package = "Negotiate";
-
-        object NTAuthentication;
-        MethodInfo NTAuthentication_GetOutgoingBlob;
-        ConstructorInfo NTAuthentication_Ctor;
+        private NegotiateAuthentication _negotiateAuth;
+        private bool _currentDisableSigning;
+        private ChannelBinding _currentChannelBinding;
 
         public string LogPrefix { get; private set; }
 
         private NetworkCredential Credential;
 
-        protected bool Initialize()
-        {
-            var NTAuthentication_Type = typeof(ServicePoint).Assembly.GetType("System.Net.NTAuthentication");
-            if (NTAuthentication_Type == null)
-            {
-                Trace.WriteLine(LogPrefix + "NTAuthentication_Type failed");
-                return false;
-            }
-
-            var ContextFlags_Type = typeof(ServicePoint).Assembly.GetType("System.Net.ContextFlags");
-            if (ContextFlags_Type == null)
-            {
-                Trace.WriteLine(LogPrefix + "ContextFlags_Type failed");
-                return false;
-            }
-
-            NTAuthentication_Ctor = NTAuthentication_Type.GetConstructor(
-                BindingFlags.NonPublic | BindingFlags.SetField | BindingFlags.Instance, null,
-                new Type[] { typeof(bool), typeof(string), typeof(NetworkCredential), typeof(string), ContextFlags_Type, typeof(ChannelBinding) },
-                new ParameterModifier[6] { new ParameterModifier(), new ParameterModifier(), new ParameterModifier(), new ParameterModifier(), new ParameterModifier(), new ParameterModifier(),
-                });
-
-            if (NTAuthentication_Ctor == null)
-            {
-                Trace.WriteLine(LogPrefix + "NTAuthentication_Ctor failed");
-                return false;
-            }
-
-            NTAuthentication_GetOutgoingBlob = NTAuthentication_Type.GetMethod("GetOutgoingBlob", BindingFlags.NonPublic | BindingFlags.Instance, null, new Type[] { typeof(string) }, new ParameterModifier[1] { new ParameterModifier() });
-
-            if (NTAuthentication_GetOutgoingBlob == null)
-            {
-                Trace.WriteLine(LogPrefix + "NTAuthentication_GetOutgoingBlob failed");
-                return false;
-            }
-
-            NTAuthentication = null;
-            return true;
-        }
-
         protected byte[] GetOutgoingBlob(byte[] incomingBlob)
         {
-            var incomingBytes = incomingBlob == null ? null : Convert.ToBase64String(incomingBlob);
+            ReadOnlySpan<byte> incomingSpan = incomingBlob ?? new byte[0];
+            var status = _negotiateAuth.GetOutgoingBlob(incomingSpan, out NegotiateAuthenticationStatusCode statusCode);
+            byte[] response = status?.ToArray() ?? new byte[0];
 
-            var t = (string)NTAuthentication_GetOutgoingBlob.Invoke(NTAuthentication, new object[] { incomingBytes });
-
-            var Response = Convert.FromBase64String(t);
-
-            int offset = GetNTLMSSPOffset(Response);
+            int offset = GetNTLMSSPOffset(response);
             if (offset > 0)
             {
-                var messageType = BitConverter.ToInt32(Response, offset + 8);
+                var messageType = BitConverter.ToInt32(response, offset + 8);
                 if (messageType == 2)
                 {
-                    var flag = BitConverter.ToInt32(Response, offset + 20);
+                    var flag = BitConverter.ToInt32(response, offset + 20);
                     if ((flag & 0x00004000) != 0)
                     {
                         Trace.WriteLine(LogPrefix + "Local CALL");
@@ -319,27 +278,53 @@ namespace PingCastle.misc
                     }
                 }
             }
-            return Response;
+            return response;
         }
 
-        bool InitDisableSigning;
-        ChannelBinding InitchannelBinding;
-
-        protected void InitializeNTAuthentication(bool DisableSigning = false, ChannelBinding channelBinding = null)
+        protected void InitializeNTAuthentication(bool disableSigning = false, ChannelBinding channelBinding = null)
         {
-            InitDisableSigning = DisableSigning;
-            InitchannelBinding = channelBinding;
-            Reinit();
+            _currentDisableSigning = disableSigning;
+            _currentChannelBinding = channelBinding;
+
+            _negotiateAuth?.Dispose();
+
+            var options = new NegotiateAuthenticationClientOptions
+            {
+                Package = package,
+                Binding = channelBinding,
+                RequiredProtectionLevel = disableSigning ? ProtectionLevel.None : ProtectionLevel.Sign
+            };
+
+            if (Credential != null)
+            {
+                options.Credential = Credential;
+            }
+
+            _negotiateAuth = new NegotiateAuthentication(options);
         }
 
-        protected void Reinit()
+        protected void ReinitializeNTAuthentication()
         {
-            // from SSPI.h
-            const int ISC_REQ_NO_INTEGRITY = 0x00800000;
-            const int ISC_REQ_INTEGRITY = 0x00010000;
-            // these flags are transformed into System.Net.ContextFlags enum
+            _negotiateAuth?.Dispose();
 
-            NTAuthentication = NTAuthentication_Ctor.Invoke(new object[] { false, package, Credential == null ? CredentialCache.DefaultCredentials : Credential, null, (InitDisableSigning ? ISC_REQ_NO_INTEGRITY : ISC_REQ_INTEGRITY), InitchannelBinding });
+            var options = new NegotiateAuthenticationClientOptions
+            {
+                Package = package,
+                Binding = _currentChannelBinding,
+                RequiredProtectionLevel = _currentDisableSigning ? ProtectionLevel.None : ProtectionLevel.Sign
+            };
+
+            if (Credential != null)
+            {
+                options.Credential = Credential;
+            }
+
+            _negotiateAuth = new NegotiateAuthentication(options);
+        }
+
+        public void Dispose()
+        {
+            _negotiateAuth?.Dispose();
         }
     }
 }

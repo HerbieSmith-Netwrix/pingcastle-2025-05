@@ -15,16 +15,39 @@ using System.Text;
 
 namespace PingCastle.misc
 {
+
+    /// <summary>
+    /// Platform-agnostic registry value types, replacing Microsoft.Win32.RegistryValueKind.
+    /// Values correspond to Windows registry types.
+    /// See: https://learn.microsoft.com/en-us/dotnet/api/microsoft.win32.registryvaluekind?view=net-8.0
+    /// </summary>
+    public enum RegistryValueType
+    {
+        None = 0,
+        String = 1,
+        ExpandString = 2,
+        Binary = 3,
+        DWord = 4,
+        DWordBigEndian = 5,
+        Link = 6,
+        MultiString = 7,
+        ResourceList = 8,
+        FullResourceDescriptor = 9,
+        ResourceRequirementsList = 10,
+        QWord = 11
+    }
+
+
     [DebuggerDisplay("{Key}: {Value}")]
     public class RegistryPolRecord
     {
 
         public string Key { get; set; }
         public string Value { get; set; }
-        public RegistryValueKind Type { get; set; }
+        public RegistryValueType Type { get; set; }
         public byte[] ByteValue { get; set; }
 
-        public RegistryPolRecord(string key, string value, RegistryValueKind type, byte[] bytevalue)
+        public RegistryPolRecord(string key, string value, RegistryValueType type, byte[] bytevalue)
         {
             Key = key;
             Value = value;
@@ -50,14 +73,18 @@ namespace PingCastle.misc
         public void LoadFile(string filename)
         {
             Records.Clear();
-            byte[] buffer = null;
-            using (var fs = fileConnection.GetFileStream(filename))
+            byte[] buffer = fileConnection.RunImpersonatedIfNeeded(() =>
             {
-                if (fs.Length < 8)
-                    throw new InvalidDataException("the file " + filename + " doesn't contain a header");
-                buffer = new byte[fs.Length];
-                fs.Read(buffer, 0, (int)fs.Length);
-            }
+                byte[] tempBuffer = null;
+                using (var fs = fileConnection.GetFileStream(filename))
+                {
+                    if (fs.Length < 8)
+                        throw new InvalidDataException("the file " + filename + " doesn't contain a header");
+                    tempBuffer = new byte[fs.Length];
+                    fs.Read(tempBuffer, 0, (int)fs.Length);
+                }
+                return tempBuffer;
+            });
             if (BitConverter.ToUInt32(buffer, 0) != PolHeader)
             {
                 throw new InvalidDataException("Header of the file incorrect");
@@ -97,7 +124,7 @@ namespace PingCastle.misc
             string value = ReadNullTerminardString(buffer, ref cursor, size);
             if (ReadSingleChar(buffer, ref cursor, size) != ';')
                 throw new InvalidDataException("Record without ';'");
-            RegistryValueKind registryType = (RegistryValueKind)BitConverter.ToUInt32(buffer, cursor);
+            RegistryValueType registryType = (RegistryValueType)BitConverter.ToUInt32(buffer, cursor);
             cursor += 4;
             if (ReadSingleChar(buffer, ref cursor, size) != ';')
                 throw new InvalidDataException("Record without ';'");
@@ -147,7 +174,7 @@ namespace PingCastle.misc
             data = 0;
             if (record == null)
                 return false;
-            if (record.Type != RegistryValueKind.DWord)
+            if (record.Type != RegistryValueType.DWord)
             {
                 Trace.WriteLine("Type for " + key + " is not DWORD: " + record.Type);
                 return false;
@@ -190,7 +217,7 @@ namespace PingCastle.misc
             stringvalue = null;
             if (record == null)
                 return false;
-            if (record.Type != RegistryValueKind.String)
+            if (record.Type != RegistryValueType.String)
             {
                 Trace.WriteLine("Type for " + key + " is not String: " + record.Type);
                 return false;

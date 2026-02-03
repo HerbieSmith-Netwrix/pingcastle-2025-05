@@ -8,6 +8,14 @@ namespace PingCastle.Exports
 {
     public class ExportUsers : ExportBase
     {
+        private readonly IIdentityProvider _identityProvider;
+        private readonly IWindowsNativeMethods _nativeMethods;
+
+        public ExportUsers(IIdentityProvider identityProvider, IWindowsNativeMethods nativeMethods)
+        {
+            _identityProvider = identityProvider;
+            _nativeMethods = nativeMethods;
+        }
 
         public override string Name
         {
@@ -23,7 +31,7 @@ namespace PingCastle.Exports
         public override void Export(string filename)
         {
             ADDomainInfo domainInfo = null;
-            using (ADWebService adws = new ADWebService(Settings.Server, Settings.Port, Settings.Credential))
+            using (ADWebService adws = new ADWebService(Settings.Server, Settings.Port, Settings.Credential, _identityProvider, _nativeMethods))
             {
                 domainInfo = adws.DomainInfo;
                 

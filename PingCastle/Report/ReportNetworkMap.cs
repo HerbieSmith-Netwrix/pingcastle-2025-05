@@ -2,10 +2,11 @@
 using PingCastle.Healthcheck;
 using PingCastle.misc;
 using PingCastle.template;
+using PingCastleCommon.Data;
+using PingCastleCommon.Utility;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
-using System.Drawing;
 using System.IO;
 using System.Net;
 using System.Reflection;
@@ -14,17 +15,23 @@ namespace PingCastle.Report
 {
     public class ReportNetworkMap : ReportBase
     {
+        private readonly IHilbertMapGenerator _hilbertGenerator;
         private NetworkMapData data;
+
+        public ReportNetworkMap(IHilbertMapGenerator hilbertGenerator = null)
+        {
+            _hilbertGenerator = hilbertGenerator ?? new NullHilbertMapGenerator();
+        }
 
         public string GenerateReportFile(PingCastleReportCollection<HealthcheckData> report, ADHealthCheckingLicense license, string filename)
         {
-            data = NetworkMapData.BuildFromConsolidation(report);
+            data = BuildNetworkMapData(report);
             return GenerateReportFile(filename);
         }
 
         public string GenerateRawContent(PingCastleReportCollection<HealthcheckData> report)
         {
-            data = NetworkMapData.BuildFromConsolidation(report);
+            data = BuildNetworkMapData(report);
             sb.Length = 0;
             GenerateContent();
             return sb.ToString();
@@ -73,166 +80,123 @@ namespace PingCastle.Report
         }
 
 
-        protected class NetworkMapData
+        private static NetworkMapData BuildNetworkMapData(PingCastleReportCollection<HealthcheckData> reports)
         {
-            public List<NetworkMapDataView> Views { get; set; }
-            public Dictionary<string, List<NetworkMapDataItem>> networkrange { get; set; }
-            public List<NetworkMapDCItem> DomainControllers { get; set; }
-
-            public static NetworkMapData BuildFromConsolidation(PingCastleReportCollection<HealthcheckData> reports)
+            var data = new NetworkMapData()
             {
-                var data = new NetworkMapData()
+                Views = new List<NetworkMapDataView>()
                 {
-                    Views = new List<NetworkMapDataView>() {
-                        new NetworkMapDataView(){
-                            framenetwork = Subnet.Parse("10.0.0.0/8"),
-                            order = 1024,
-                        },
-                        new NetworkMapDataView()
-                        {
-                            framenetwork = Subnet.Parse("192.168.0.0/16"),
-                            order = 256,
-                        }
+                    new NetworkMapDataView()
+                    {
+                        FrameNetwork = Subnet.Parse("10.0.0.0/8"),
+                        Order = 1024,
                     },
-                };
-                data.networkrange = new Dictionary<string, List<NetworkMapDataItem>>();
-                data.DomainControllers = new List<NetworkMapDCItem>();
-                var latestForestReports = new Dictionary<string, HealthcheckData>();
-
-                Trace.WriteLine("NetworkMapData: 1");
-                foreach (var report in reports)
-                {
-                    // select latest forest report to have the latest network information
-                    var version = new Version(report.EngineVersion.Split(' ')[0]);
-                    if (!(version.Major < 2 || (version.Major == 2 && version.Minor < 6)))
+                    new NetworkMapDataView()
                     {
-                        if (report.Forest != null && !string.IsNullOrEmpty(report.Forest.DomainSID))
+                        FrameNetwork = Subnet.Parse("192.168.0.0/16"),
+                        Order = 256,
+                    }
+                },
+            };
+            data.NetworkRange = new Dictionary<string, List<NetworkMapDataItem>>();
+            data.DomainControllers = new List<NetworkMapDCItem>();
+            var latestForestReports = new Dictionary<string, HealthcheckData>();
+
+            Trace.WriteLine("NetworkMapData: 1");
+            foreach (var report in reports)
+            {
+                var version = new Version(report.EngineVersion.Split(' ')[0]);
+                if (!(version.Major < 2 || (version.Major == 2 && version.Minor < 6)))
+                {
+                    if (report.Forest != null && !string.IsNullOrEmpty(report.Forest.DomainSID))
+                    {
+                        if (!latestForestReports.ContainsKey(report.Forest.DomainSID))
                         {
-                            if (!latestForestReports.ContainsKey(report.Forest.DomainSID))
-                            {
-                                latestForestReports[report.Forest.DomainSID] = report;
-                            }
-                            else if (latestForestReports[report.Forest.DomainSID].GenerationDate < report.GenerationDate)
-                            {
-                                latestForestReports[report.Forest.DomainSID] = report;
-                            }
+                            latestForestReports[report.Forest.DomainSID] = report;
+                        }
+                        else if (latestForestReports[report.Forest.DomainSID].GenerationDate < report.GenerationDate)
+                        {
+                            latestForestReports[report.Forest.DomainSID] = report;
                         }
                     }
                 }
+            }
 
-                Trace.WriteLine("NetworkMapData: 2");
-                // store network information
-                foreach (var report in latestForestReports.Values)
+            Trace.WriteLine("NetworkMapData: 2");
+            foreach (var report in latestForestReports.Values)
+            {
+                var list = new List<NetworkMapDataItem>();
+                data.NetworkRange.Add(report.Forest.DomainSID, list);
+                foreach (var site in report.Sites)
                 {
-                    var list = new List<NetworkMapDataItem>();
-                    data.networkrange.Add(report.Forest.DomainSID, list);
-                    foreach (var site in report.Sites)
+                    foreach (var network in site.Networks)
                     {
-                        foreach (var network in site.Networks)
+                        try
                         {
-                            // avoid bogus network definitions
-                            try
+                            list.Add(new NetworkMapDataItem()
                             {
-                                list.Add(new NetworkMapDataItem()
-                                {
-                                    Network = Subnet.Parse(network),
-                                    Source = report.Forest.DomainName,
-                                    Description = site.Description,
-                                    Location = site.Location,
-                                    Name = site.SiteName,
-                                });
-                            }
-                            catch (Exception)
-                            { }
-                        }
-                    }
-                }
-                Trace.WriteLine("NetworkMapData: 3");
-                // tag the network
-                foreach (var report in reports)
-                {
-                    IEnumerable<NetworkMapDataItem> networks = null;
-                    if (report.Forest != null && 
-                        !string.IsNullOrEmpty(report.Forest.DomainSID) && 
-                        data.networkrange.ContainsKey(report.Forest.DomainSID))
-                    {
-                        networks = data.networkrange[report.Forest.DomainSID];
-                    }
-                    // collect DC info
-                    foreach (var dc in report.DomainControllers)
-                    {
-                        if (dc.IP == null)
-                            continue;
-                        foreach (string ip in dc.IP)
-                        {
-                            IPAddress i;
-                            if (!IPAddress.TryParse(ip, out i))
-                            {
-                                continue;
-                            }
-                            if (i.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork)
-                                continue;
-                            data.DomainControllers.Add(new NetworkMapDCItem()
-                            {
-                                Name = dc.DCName,
-                                Source = report.DomainFQDN,
-                                Ip = i,
+                                Network = Subnet.Parse(network),
+                                Source = report.Forest.DomainName,
+                                Description = site.Description,
+                                Location = site.Location,
+                                Name = site.SiteName,
                             });
-                            if (networks != null)
-                            {
-                                foreach (var network in networks)
-                                {
-                                    if (network.Network.MatchIp(i))
-                                    {
-                                        if (string.IsNullOrEmpty(network.DomainFQDN))
-                                        {
-                                            network.DomainFQDN = report.DomainFQDN;
-                                        }
-                                        else if (network.DomainFQDN == report.DomainFQDN)
-                                        {
+                        }
+                        catch (Exception)
+                        { }
+                    }
+                }
+            }
 
-                                        }
-                                        else
-                                        {
-                                            network.DomainFQDN = "_multiple_";
-                                        }
+            Trace.WriteLine("NetworkMapData: 3");
+            foreach (var report in reports)
+            {
+                IEnumerable<NetworkMapDataItem> networks = null;
+                if (report.Forest != null &&
+                    !string.IsNullOrEmpty(report.Forest.DomainSID) &&
+                    data.NetworkRange.ContainsKey(report.Forest.DomainSID))
+                {
+                    networks = data.NetworkRange[report.Forest.DomainSID];
+                }
+
+                foreach (var dc in report.DomainControllers)
+                {
+                    if (dc.IP == null)
+                        continue;
+                    foreach (string ip in dc.IP)
+                    {
+                        if (!IPAddress.TryParse(ip, out var i))
+                            continue;
+                        if (i.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork)
+                            continue;
+                        data.DomainControllers.Add(new NetworkMapDCItem()
+                        {
+                            Name = dc.DCName,
+                            Source = report.DomainFQDN,
+                            Ip = i,
+                        });
+                        if (networks != null)
+                        {
+                            foreach (var network in networks)
+                            {
+                                if (network.Network.MatchIp(i))
+                                {
+                                    if (string.IsNullOrEmpty(network.DomainFQDN))
+                                    {
+                                        network.DomainFQDN = report.DomainFQDN;
+                                    }
+                                    else if (network.DomainFQDN != report.DomainFQDN)
+                                    {
+                                        network.DomainFQDN = "_multiple_";
                                     }
                                 }
                             }
                         }
-
                     }
                 }
-                return data;
             }
 
-        }
-
-        protected class NetworkMapDataView
-        {
-            public int order { get; set; }
-            public Subnet framenetwork { get; set; }
-            public bool HasData { get; set; }
-            public int RecordCount { get; set; }
-            public int ForestCount { get; set; }
-        }
-
-        protected class NetworkMapDataItem
-        {
-            public Subnet Network { get; set; }
-            public string Source { get; set; }
-            public string Name { get; set; }
-            public string Description { get; set; }
-            public string Location { get; set; }
-            public string DomainFQDN { get; set; }
-        }
-
-        protected class NetworkMapDCItem
-        {
-            public string Source { get; set; }
-            public string Name { get; set; }
-            public IPAddress Ip { get; set; }
-
+            return data;
         }
 
         private void GenerateContent(string selectedTab = null)
@@ -281,7 +245,7 @@ Each square represent a network. It can be used to detect non occupied space or 
 
                     Add(@"
 <div class=""card"">
-	<img class=""rounded map_view"" alt=""" + view.framenetwork + @""" src=""data:image/gif;base64,");
+	<img class=""rounded map_view"" alt=""" + view.FrameNetwork + @""" src=""data:image/gif;base64,");
                     Add(Convert.ToBase64String(ms.ToArray()));
                     AddLine(@"""  view-id=""");
                     Add(id);
@@ -289,9 +253,9 @@ Each square represent a network. It can be used to detect non occupied space or 
                     AddLine(@"<i class=""map_view_tooltip"" data-bs-toggle=""tooltip"" data-bs-html=""true"" data-bs-placement=""right"" title=""No network found"" data-bs-animation=""false"" data-bs-trigger=""manual""></i>");
                     Add(@"
 	<div class=""card-body"">
-	<h5 class=""card-title"">" + view.framenetwork + @"</h5>
+	<h5 class=""card-title"">" + view.FrameNetwork + @"</h5>
 	<p class=""card-text"">The network ");
-                    Add(view.framenetwork.ToString());
+                    Add(view.FrameNetwork.ToString());
                     Add(" does match ");
                     Add(view.RecordCount);
                     Add(" networks. This information is coming from ");
@@ -300,7 +264,7 @@ Each square represent a network. It can be used to detect non occupied space or 
 	<a href=""#"" class=""btn btn-primary btn-view"" view-id=""");
                     Add(id++);
                     Add(@""" view-order=""");
-                    Add(view.order);
+                    Add(view.Order);
                     Add(@""">View</a>
 	</div>
 </div>");
@@ -419,59 +383,7 @@ Each square represent a network. It can be used to detect non occupied space or 
 
         private bool GenerateHilbertImage(Stream stream, NetworkMapDataView view)
         {
-            const int order = 256;
-            var uniqueForestSID = new List<string>();
-            var subnets = new List<Subnet>();
-            foreach (var key in data.networkrange.Keys)
-                foreach (var subnet in data.networkrange[key])
-                {
-                    // keep only ipv4
-                    if (subnet.Network.StartAddress.AddressFamily != System.Net.Sockets.AddressFamily.InterNetwork)
-                        continue;
-                    // keep only networks that are visible
-                    if (!view.framenetwork.MatchIp(subnet.Network.StartAddress) || !view.framenetwork.MatchIp(subnet.Network.EndAddress))
-                        continue;
-                    // avoiding filling all the space with larger networks
-                    if (subnet.Network.MatchIp(view.framenetwork.StartAddress) && subnet.Network.MatchIp(view.framenetwork.EndAddress))
-                        continue;
-                    subnets.Add(subnet.Network);
-                    if (!uniqueForestSID.Contains(key))
-                        uniqueForestSID.Add(key);
-                }
-            if (subnets.Count == 0)
-                return false;
-            view.RecordCount = subnets.Count;
-            view.ForestCount = uniqueForestSID.Count;
-            using (Bitmap bitmap = new Bitmap(order, order, System.Drawing.Imaging.PixelFormat.Format32bppArgb))
-            using (Graphics g = Graphics.FromImage(bitmap))
-            using (SolidBrush drawBrush = new SolidBrush(Color.Black))
-            using (SolidBrush dcBrush = new SolidBrush(Color.Red))
-            using (StringFormat drawFormat1 = new StringFormat())
-            {
-                g.Clear(Color.GhostWhite);
-                foreach (var s in subnets)
-                {
-                    ulong a = convertToN(s.StartAddress, view.framenetwork, order);
-                    ulong b = convertToN(s.EndAddress, view.framenetwork, order);
-                    for (ulong i = a; i <= b; i++)
-                    {
-                        int x = 0; int y = 0;
-                        d2xy(order, (int)i, ref x, ref y);
-                        g.FillRectangle(drawBrush, x, y, 1, 1);
-                    }
-                }
-                foreach (var dc in data.DomainControllers)
-                {
-                    if (!view.framenetwork.MatchIp(dc.Ip))
-                        continue;
-                    ulong a = convertToN(dc.Ip, view.framenetwork, order);
-                    int x = 0; int y = 0;
-                    d2xy(order, (int)a, ref x, ref y);
-                    g.FillRectangle(dcBrush, x, y, 2, 2);
-                }
-                bitmap.Save(stream, System.Drawing.Imaging.ImageFormat.Png);
-            }
-            return true;
+            return _hilbertGenerator.TryGenerateHilbertImage(stream, view, data);
         }
 
         void GenerateJson()
@@ -488,16 +400,16 @@ Each square represent a network. It can be used to detect non occupied space or 
                 Add(id++);
                 AddLine(",");
                 Add(@" ""order"": ");
-                Add(view.order);
+                Add(view.Order);
                 AddLine(",");
                 Add(@" ""name"": """);
-                AddJsonEncoded(view.framenetwork.ToString());
+                AddJsonEncoded(view.FrameNetwork.ToString());
                 AddLine(@""",");
                 Add(@" ""start"": ");
-                Add(AdressToLong(view.framenetwork.StartAddress));
+                Add(AddressToLong(view.FrameNetwork.StartAddress));
                 AddLine(",");
                 Add(@" ""end"": ");
-                Add(AdressToLong(view.framenetwork.EndAddress));
+                Add(AddressToLong(view.FrameNetwork.EndAddress));
                 AddLine();
                 AddLine("}");
             }
@@ -506,8 +418,8 @@ Each square represent a network. It can be used to detect non occupied space or 
             AddLine(@"<script type=""application/json"" data-pingcastle-selector=""Network"">");
             AddLine(@"[");
             id = 0;
-            foreach (var key in data.networkrange.Keys)
-                foreach (var subnet in data.networkrange[key])
+            foreach (var key in data.NetworkRange.Keys)
+                foreach (var subnet in data.NetworkRange[key])
                 {
                     if (id++ != 0)
                         Add(",");
@@ -540,10 +452,10 @@ Each square represent a network. It can be used to detect non occupied space or 
                         AddLine(@""",");
                     }
                     Add(@" ""start"": ");
-                    Add(AdressToLong(subnet.Network.StartAddress));
+                    Add(AddressToLong(subnet.Network.StartAddress));
                     AddLine(",");
                     Add(@" ""end"": ");
-                    Add(AdressToLong(subnet.Network.EndAddress));
+                    Add(AddressToLong(subnet.Network.EndAddress));
                     AddLine();
                     AddLine("}");
                 }
@@ -570,73 +482,17 @@ Each square represent a network. It can be used to detect non occupied space or 
                 AddJsonEncoded(dc.Ip.ToString());
                 AddLine(@""",");
                 Add(@" ""iplong"": ");
-                Add(AdressToLong(dc.Ip));
+                Add(AddressToLong(dc.Ip));
                 AddLine("}");
             }
             AddLine("]");
             AddLine(@"</script>");
         }
 
-        ulong convertToN(IPAddress point, Subnet range, int n)
-        {
-            var v1 = AdressToLong(range.StartAddress);
-            var v = AdressToLong(range.EndAddress) - v1;
-            return ((ulong)n * (ulong)n * (AdressToLong(point) - v1) / v);
-        }
-
-        ulong AdressToLong(IPAddress a)
+        private ulong AddressToLong(IPAddress a)
         {
             var b = a.GetAddressBytes();
             return ((ulong)b[0] << 24) + ((ulong)b[1] << 16) + ((ulong)b[2] << 8) + (ulong)b[3];
-        }
-
-        //convert (x,y) to d
-        int xy2d(int n, int x, int y)
-        {
-            int rx, ry, s, d = 0;
-            for (s = n / 2; s > 0; s /= 2)
-            {
-
-                rx = Convert.ToInt32(((x & s) > 0));
-                ry = Convert.ToInt32((y & s) > 0);
-                d += s * s * ((3 * rx) ^ ry);
-                rot(s, ref x, ref y, rx, ry);
-            }
-            return d;
-        }
-
-        //convert d to (x,y)
-        void d2xy(int n, int d, ref int x, ref int y)
-        {
-            int rx, ry, s, t = d;
-            x = y = 0;
-            for (s = 1; s < n; s *= 2)
-            {
-                rx = 1 & (t / 2);
-                ry = 1 & (t ^ rx);
-                rot(s, ref x, ref y, rx, ry);
-                x += s * rx;
-                y += s * ry;
-                t /= 4;
-            }
-        }
-
-        //rotate/flip a quadrant appropriately
-        void rot(int n, ref int x, ref int y, int rx, int ry)
-        {
-            if (ry == 0)
-            {
-                if (rx == 1)
-                {
-                    x = n - 1 - x;
-                    y = n - 1 - y;
-                }
-
-                //Swap x and y
-                int t = x;
-                x = y;
-                y = t;
-            }
         }
     }
 }

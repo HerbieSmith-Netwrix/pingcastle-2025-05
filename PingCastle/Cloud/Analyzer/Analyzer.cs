@@ -1,4 +1,4 @@
-﻿//
+//
 // Copyright (c) Vincent LE TOUX for Ping Castle. All rights reserved.
 // https://www.pingcastle.com
 //
@@ -93,7 +93,6 @@ namespace PingCastle.Cloud.Analyzer
                 {
                     var openId = await PublicService.GetOpenIDConfiguration(data.TenantName);
 
-                    //data.TenantId = openId.issuer.Replace("https://sts.windows.net/", "").Replace("/", "");
                     data.Region = openId.tenant_region_scope;
                 }
                 await RunTaskAsync("Company Info", AnalyzeCompanyInfo);
@@ -522,19 +521,12 @@ namespace PingCastle.Cloud.Analyzer
 
             data.UsersPasswordNeverExpires = new List<HealthCheckCloudDataUser>();
             data.UsersInactive = new List<HealthCheckCloudDataUser>();
-            data.OldInvitations = new List<HealthCheckCloudDataUser>();
             data.NumberOfUsers = 0;
 
             var graph = GraphApiClientFactory.Create(credential);
             await foreach (var user in graph.GetAllUsersAsync())
             {
                 data.NumberOfUsers++;
-
-                if ((data.NumberOfUsers % 500) == 0)
-                {
-                    _ui.AddText("+");
-                    Trace.Write("+");
-                }
 
                 var userType = user.UserType?.ToString();
 
@@ -613,9 +605,6 @@ namespace PingCastle.Cloud.Analyzer
                     }
                 }
             }
-
-
-            _ui.DisplayMessage("");
 
             var fd = new Dictionary<string, HealthCheckCloudDataForeignDomains>();
             foreach (var domain in ForeignDomainsGuest.Keys)

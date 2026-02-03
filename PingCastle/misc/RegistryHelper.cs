@@ -2,12 +2,15 @@
 using System.Diagnostics;
 using System.Security;
 using System;
+using System.Text.RegularExpressions;
 using PingCastle.UserInterface;
 
 namespace PingCastle.misc
 {
     internal class RegistryHelper
     {
+        private static readonly Regex KbRegex = new Regex(@"KB(\d+)", RegexOptions.Compiled);
+
         internal static bool TryGetHKLMKeyBinaryValue(string keyPath, string keyValueName, string hostName, out byte[] value)
         {
             IUserInterface ui = UserInterfaceFactory.GetUserInterface();

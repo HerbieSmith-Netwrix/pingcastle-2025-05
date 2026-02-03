@@ -2,8 +2,14 @@
 
 namespace PingCastle.Scanners
 {
+    using ADWS;
+
     public class ZeroLogonScanner : ScannerBase
     {
+        public ZeroLogonScanner(IIdentityProvider identityProvider)
+            : base(identityProvider)
+        {
+        }
 
         public override string Name { get { return "zerologon"; } }
         public override string Description { get { return "Test for the ZeroLogon vulnerability. Important: the tester must be inside the domain. Trusts cannot be used."; } }

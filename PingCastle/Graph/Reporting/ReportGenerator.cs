@@ -1,4 +1,4 @@
-﻿//
+//
 // Copyright (c) Ping Castle. All rights reserved.
 // https://www.pingcastle.com
 //
@@ -598,7 +598,7 @@ namespace PingCastle.Graph.Reporting
                 member.Email = x.Mail;
                 member.Class = x.Class;
 
-                if ((x.UserAccountControl & 0x00000002) != 0)
+                if (x.IsAccountDisabled())
                     data.NumberOfMemberDisabled++;
                 else
                 {
@@ -615,27 +615,28 @@ namespace PingCastle.Graph.Reporting
                     if (x.ServicePrincipalName != null && x.ServicePrincipalName.Length > 0)
                     {
                         member.IsService = true;
+                        member.ServicePrincipalNames = new List<string>(x.ServicePrincipalName);
                         data.NumberOfServiceAccount++;
                     }
-                    if ((x.UserAccountControl & 0x00000010) != 0)
+                    if (x.IsAccountLockedOut())
                     {
                         member.IsLocked = true;
                         data.NumberOfMemberLocked++;
                     }
-                    if ((x.UserAccountControl & 0x00010000) != 0)
+                    if (x.IsPasswordNeverExpires())
                     {
                         data.NumberOfMemberPwdNeverExpires++;
                         member.DoesPwdNeverExpires = true;
                     }
-                    if ((x.UserAccountControl & 0x00000020) != 0)
+                    if (x.IsPasswordNotRequired())
                         data.NumberOfMemberPwdNotRequired++;
                     // this account is sensitive and cannot be delegated
-                    if ((x.UserAccountControl & 0x100000) == 0)
+                    if (!x.IsNotDelegated())
                     {
                         data.NumberOfMemberCanBeDelegated++;
                         member.CanBeDelegated = true;
                     }
-                    if ((x.UserAccountControl & 0x40000) != 0)
+                    if (x.IsSmartcardRequired())
                     {
                         data.NumberOfSmartCardRequired++;
                         member.SmartCardRequired = true;
@@ -715,10 +716,7 @@ namespace PingCastle.Graph.Reporting
             member.DistinguishedName = x.DistinguishedName;
             member.PwdLastSet = x.PwdLastSet;
             member.LastLogonTimestamp = x.LastLogonTimestamp;
-            if ((x.UserAccountControl & 0x00000002) != 0)
-            {
-            }
-            else
+            if (!x.IsAccountDisabled())
             {
                 member.IsEnabled = true;
                 // last login since 6 months
@@ -726,32 +724,29 @@ namespace PingCastle.Graph.Reporting
                 {
                     member.IsActive = true;
                 }
-                else
-                {
-                }
                 if (x.ServicePrincipalName != null && x.ServicePrincipalName.Length > 0)
                 {
                     member.IsService = true;
                     member.SPN = new List<string>(x.ServicePrincipalName);
                 }
-                if ((x.UserAccountControl & 0x00000010) != 0)
+                if (x.IsAccountLockedOut())
                 {
                     member.IsLocked = true;
                 }
-                if ((x.UserAccountControl & 0x00010000) != 0)
+                if (x.IsPasswordNeverExpires())
                 {
                     member.DoesPwdNeverExpires = true;
                 }
-                if ((x.UserAccountControl & 0x00000020) != 0)
+                if (x.IsPasswordNotRequired())
                 {
                     member.IsPwdNotRequired = true;
                 }
                 // this account is sensitive and cannot be delegated
-                if ((x.UserAccountControl & 0x100000) == 0)
+                if (!x.IsNotDelegated())
                 {
                     member.CanBeDelegated = true;
                 }
-                if ((x.UserAccountControl & 0x40000) != 0)
+                if (x.IsSmartcardRequired())
                 {
                     member.SmartCardRequired = true;
                 }
@@ -765,10 +760,7 @@ namespace PingCastle.Graph.Reporting
             member.Name = x.SAMAccountName;
             member.DistinguishedName = x.DistinguishedName;
             member.LastLogonTimestamp = x.LastLogonTimestamp;
-            if ((x.UserAccountControl & 0x00000002) != 0)
-            {
-            }
-            else
+            if (!x.IsAccountDisabled())
             {
                 member.IsEnabled = true;
                 // last login since 6 months
@@ -776,19 +768,16 @@ namespace PingCastle.Graph.Reporting
                 {
                     member.IsActive = true;
                 }
-                else
-                {
-                }
                 if (x.ServicePrincipalName != null && x.ServicePrincipalName.Length > 0)
                 {
                     member.SPN = new List<string>(x.ServicePrincipalName);
                 }
-                if ((x.UserAccountControl & 0x00000010) != 0)
+                if (x.IsAccountLockedOut())
                 {
                     member.IsLocked = true;
                 }
                 // this account is sensitive and cannot be delegated
-                if ((x.UserAccountControl & 0x100000) == 0)
+                if (!x.IsNotDelegated())
                 {
                     member.CanBeDelegated = true;
                 }
@@ -1016,7 +1005,6 @@ namespace PingCastle.Graph.Reporting
             }
 
             Trace.WriteLine("Compute distance");
-            //SimplifyGraph(knownNodeAfterThis, links);
             ComputeDistance(rootNodeId, links, knownNodeAfterThis);
         }
 

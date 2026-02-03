@@ -2,8 +2,8 @@
 using PingCastle.Graph.Database;
 using PingCastle.Graph.Export;
 using PingCastle.Graph.Reporting;
-using PingCastle.misc;
 using PingCastle.UserInterface;
+using PingCastle.Utility;
 using System;
 using System.Collections.Generic;
 using System.Diagnostics;
@@ -17,6 +17,9 @@ namespace PingCastle.Scanners
 {
     public class ACLScanner : IScanner
     {
+        private readonly IIdentityProvider _identityProvider;
+        private readonly IWindowsNativeMethods _nativeMethods;
+
         public string Name { get { return "aclcheck"; } }
         public string Description { get { return "Check authorization related to users or groups. Default to everyone, authenticated users and domain users"; } }
 
@@ -24,12 +27,30 @@ namespace PingCastle.Scanners
         public static List<string> UserList = new List<string>();
 
         RuntimeSettings Settings;
+        private readonly IADConnectionFactory _connectionFactory;
 
         private readonly IUserInterface _ui = UserInterfaceFactory.GetUserInterface();
+
+        public ACLScanner(IIdentityProvider identityProvider, IWindowsNativeMethods nativeMethods) : this(null, identityProvider, nativeMethods)
+        {
+        }
+
+        public ACLScanner(IADConnectionFactory connectionFactory, IIdentityProvider identityProvider, IWindowsNativeMethods nativeMethods)
+        {
+            _connectionFactory = connectionFactory;
+            _identityProvider = identityProvider;
+            _nativeMethods = nativeMethods;
+        }
 
         public void Initialize(RuntimeSettings settings)
         {
             Settings = settings;
+
+            if (_connectionFactory == null)
+            {
+                throw new InvalidOperationException(
+                    "IADConnectionFactory not provided. Scanner must be created via PingCastleFactory.");
+            }
         }
 
         List<Guid> DangerousObjectToRead = null;
@@ -38,7 +59,7 @@ namespace PingCastle.Scanners
         {
             DisplayAdvancement("Starting");
 
-            using (ADWebService adws = new ADWebService(Settings.Server, Settings.Port, Settings.Credential))
+            using (var adws = _connectionFactory.CreateConnection(Settings.Server, Settings.Port, Settings.Credential, _identityProvider, _nativeMethods))
             {
                 var LAPSAnalyzer = new PingCastle.Healthcheck.LAPSAnalyzer(adws);
 
@@ -46,7 +67,7 @@ namespace PingCastle.Scanners
 
                 using (StreamWriter sw = File.CreateText(filename))
                 {
-                    sw.WriteLine("DistinguishedName\tIdentity\tAccessRule");
+                    sw.WriteLine("distinguishedname\tIdentity\tAccessRule");
                     var domainInfo = adws.DomainInfo;
                     EnrichDomainInfo(adws, domainInfo);
                     BuildUserList(adws, domainInfo);
@@ -81,7 +102,7 @@ namespace PingCastle.Scanners
                     }
                     );
                     DisplayAdvancement("Analyzing AD Objects");
-                    adws.Enumerate(domainInfo.DefaultNamingContext, "(objectClass=*)", new string[] { "distinguishedName", "nTSecurityDescriptor" }, callback);
+                    adws.Enumerate(domainInfo.DefaultNamingContext, "(objectClass=*)", new string[] { "distinguishedname", "nTSecurityDescriptor" }, callback);
                     DisplayAdvancement("Analyzing files");
                     CheckFilePermission(domainInfo, sw, adws);
                     DisplayAdvancement("Done");
@@ -89,7 +110,7 @@ namespace PingCastle.Scanners
             }
         }
 
-        private void EnrichDomainInfo(ADWebService adws, ADDomainInfo domainInfo)
+        private void EnrichDomainInfo(IADWebService adws, ADDomainInfo domainInfo)
         {
             // adding the domain sid
             string[] properties = new string[] {"objectSid",
@@ -101,11 +122,11 @@ namespace PingCastle.Scanners
                 };
 
             adws.Enumerate(domainInfo.DefaultNamingContext,
-                                            "(&(objectClass=domain)(distinguishedName=" + domainInfo.DefaultNamingContext + "))",
+                                            "(&(objectClass=domain)(distinguishedname=" + domainInfo.DefaultNamingContext + "))",
                                             properties, callback, "Base");
         }
 
-        private void BuildUserList(ADWebService adws, ADDomainInfo domainInfo)
+        private void BuildUserList(IADWebService adws, ADDomainInfo domainInfo)
         {
             UsersToMatch = new List<KeyValuePair<SecurityIdentifier, string>>();
             if (UserList.Count == 0)
@@ -178,11 +199,11 @@ Or just press enter to use the default (Everyone, Anonymous, Builtin\\Users, Aut
             return null;
         }
 
-        private ADItem Search(ADWebService adws, ADDomainInfo domainInfo, string userName)
+        private ADItem Search(IADWebService adws, ADDomainInfo domainInfo, string userName)
         {
             ADItem output = null;
             string[] properties = new string[] {
-                        "distinguishedName",
+                        "distinguishedname",
                         "displayName",
                         "name",
                         "objectSid",
@@ -315,7 +336,7 @@ Or just press enter to use the default (Everyone, Anonymous, Builtin\\Users, Aut
             return false;
         }
 
-        void CheckFilePermission(ADDomainInfo domainInfo, StreamWriter sw, ADWebService adws)
+        void CheckFilePermission(ADDomainInfo domainInfo, StreamWriter sw, IADWebService adws)
         {
             var pathToCheck = new List<string>();
             foreach (var script in Directory.GetDirectories(@"\\" + domainInfo.DnsHostName + @"\SYSVOL\" + domainInfo.DomainName + @"\scripts", "*", SearchOption.TopDirectoryOnly))
@@ -394,7 +415,7 @@ Or just press enter to use the default (Everyone, Anonymous, Builtin\\Users, Aut
             {
                 try
                 {
-                    AnalyzeAccessControl(sw, Directory.GetAccessControl(dirname), dirname, (path == dirname));
+                    AnalyzeAccessControl(sw, new DirectoryInfo(dirname).GetAccessControl(), dirname, (path == dirname));
                 }
                 catch (Exception)
                 {
@@ -404,7 +425,7 @@ Or just press enter to use the default (Everyone, Anonymous, Builtin\\Users, Aut
             {
                 try
                 {
-                    AnalyzeAccessControl(sw, File.GetAccessControl(filename), filename, false);
+                    AnalyzeAccessControl(sw, new FileInfo(filename).GetAccessControl(), filename, false);
                 }
                 catch (Exception)
                 {
